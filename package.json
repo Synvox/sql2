@@ -3,10 +3,13 @@
   "description": "",
   "devDependencies": {
     "prettier": "3.6.2",
-    "typescript": "^5"
+    "typescript": "^5",
+    "@electric-sql/pglite": "0.3.14"
   },
   "exports": {
-    ".": "./dist/sql2.js"
+    ".": "./dist/sql2.js",
+    "./fs": "./dist/plugins/fs/index.js",
+    "./migrations": "./dist/plugins/migrations/index.js"
   },
   "keywords": [
     "builder",
@@ -31,7 +34,8 @@
     "url": "git+https://github.com/synvox/sql2.git"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.lib.json",
+    "build": "tsc -p tsconfig.lib.json && npm run copy-assets",
+    "copy-assets": "rsync -a --include='*/' --exclude='*.ts' --exclude='*.tsx' ./src/ ./dist/",
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test './src/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.lib.json --noEmit"
   },

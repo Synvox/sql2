@@ -1,20 +1,14 @@
-export type Interpolable = Statement | number | string | boolean | null;
-
 const placeholder = Symbol();
 
-function invariant(condition: boolean, message: string) {
-  if (!condition) throw new Error(message);
-}
+export type Interpolable = Statement | number | string | boolean | null;
 
 export class Statement {
   readonly strings: (string | typeof placeholder)[] = [];
   readonly values: Interpolable[] = [];
 
   constructor(strings: ReadonlyArray<string>, values: Interpolable[]) {
-    invariant(
-      values && strings.length - 1 === values.length,
-      "Invalid number of values"
-    );
+    if (strings.length - 1 !== values.length)
+      throw new Error("Invalid number of values");
 
     let givenStrings: (string | typeof placeholder)[] = [...strings];
     let givenValues: Interpolable[] = [...values];
@@ -56,12 +50,27 @@ export class Statement {
   }
 }
 
-export interface Sql {
-  (strings: TemplateStringsArray, ...values: Interpolable[]): Statement;
+export function join(interpolables: Interpolable[], separator: Statement) {
+  return new Statement(
+    [
+      "",
+      ...interpolables.map((_, i, { length }) =>
+        i + 1 === length ? "" : separator.compile()
+      ),
+    ],
+    interpolables
+  );
 }
 
-export function createSql<C extends Sql>(sqlClass: C) {
-  return sqlClass;
+export abstract class QueryableStatement extends Statement {
+  /**
+   * Executes the statement as a query.
+   * No parameters are provided.
+   */
+  abstract exec(): Promise<void>;
+  /**
+   * Executes the statement as a query.
+   * Parameters are provided.
+   */
+  abstract query<T>(): Promise<{ rows: T[] }>;
 }
-
-type createSql<C extends Sql> = (sqlClass: C) => C;
