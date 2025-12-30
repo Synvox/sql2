@@ -55,7 +55,8 @@
 -- ========================================
 -- SCHEMA
 -- ========================================
-CREATE SCHEMA IF NOT EXISTS fs;
+create schema if not exists fs;
+
 -- ========================================
 -- EXTENSIONS
 -- ========================================
@@ -67,1056 +68,1076 @@ CREATE SCHEMA IF NOT EXISTS fs;
 -- TABLE DEFINITIONS
 -- ========================================
 /*
- fs.repositories
- ---------------
- Represents a repository (a virtual drive / project root).
- 
- Key ideas:
- - A repository always has a "default branch" (`default_branch_id`).
- - On repository creation, we automatically create the default `main` branch
- (with `head_commit_id = NULL` initially) and set `default_branch_id`.
- 
- Columns:
- - id (uuid): Repository identifier (default: gen_random_uuid()).
- - name (text): Human-readable unique name.
- - default_branch_id (uuid, nullable): Points to the default branch row.
- - created_at (timestamptz): Creation timestamp (default: now()).
- */
-CREATE TABLE fs.repositories (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  name TEXT NOT NULL UNIQUE,
-  default_branch_id UUID,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+fs.repositories
+---------------
+represents a repository (a virtual drive / project root).
+
+key ideas:
+- a repository always has a "default branch" (`default_branch_id`).
+- on repository creation, we automatically create the default `main` branch
+(with `head_commit_id = null` initially) and set `default_branch_id`.
+
+columns:
+- id (uuid): repository identifier (default: gen_random_uuid()).
+- name (text): human-readable unique name.
+- default_branch_id (uuid, nullable): points to the default branch row.
+- created_at (timestamptz): creation timestamp (default: now()).
+*/
+create table fs.repositories (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  default_branch_id uuid,
+  created_at timestamptz not null default now()
 );
+
 /*
- fs.commits
- ----------
- Represents a commit node in a repository's commit graph.
- 
- Invariants:
- - Each commit belongs to exactly one repository (`repository_id`).
- - Each commit has **at most one parent** (`parent_commit_id`).
- - Only the first/root commit per repository may have `parent_commit_id IS NULL`.
- - Parents must be in the **same repository** (enforced by a composite FK).
- 
- Notes:
- - Commits are intended to be append-only. The system assumes commit rows are not
- updated in-place.
- 
- Columns:
- - id (uuid): Commit identifier.
- - repository_id (uuid): Owning repository (FK → fs.repositories).
- - parent_commit_id (uuid, nullable): Parent commit in the same repository.
- - message (text): Commit message.
- - created_at (timestamptz): Creation timestamp.
- 
- Constraints:
- - commits_id_repository_id_unique:
- Provides a `(id, repository_id)` target for composite foreign keys.
- - commits_parent_same_repo_fk:
- Enforces that `(parent_commit_id, repository_id)` references a commit in the
- same repository.
- */
-CREATE TABLE fs.commits (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repository_id UUID NOT NULL REFERENCES fs.repositories(id) ON DELETE CASCADE,
-  parent_commit_id UUID,
+fs.commits
+----------
+represents a commit node in a repository's commit graph.
+
+invariants:
+- each commit belongs to exactly one repository (`repository_id`).
+- each commit has **at most one parent** (`parent_commit_id`).
+- only the first/root commit per repository may have `parent_commit_id is null`.
+- parents must be in the **same repository** (enforced by a composite fk).
+
+notes:
+- commits are intended to be append-only. the system assumes commit rows are not
+updated in-place.
+
+columns:
+- id (uuid): commit identifier.
+- repository_id (uuid): owning repository (fk → fs.repositories).
+- parent_commit_id (uuid, nullable): parent commit in the same repository.
+- message (text): commit message.
+- created_at (timestamptz): creation timestamp.
+
+constraints:
+- commits_id_repository_id_unique:
+provides a `(id, repository_id)` target for composite foreign keys.
+- commits_parent_same_repo_fk:
+enforces that `(parent_commit_id, repository_id)` references a commit in the
+same repository.
+*/
+create table fs.commits (
+  id uuid primary key default gen_random_uuid(),
+  repository_id uuid not null references fs.repositories (id) on delete cascade,
+  parent_commit_id uuid,
   -- Optional pointer to the "other" side of a merge. This keeps history linear
   -- while still remembering which commit was merged.
-  merged_from_commit_id UUID,
-  message TEXT NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT commits_id_repository_id_unique UNIQUE (id, repository_id),
-  CONSTRAINT commits_parent_same_repo_fk FOREIGN KEY (parent_commit_id, repository_id) REFERENCES fs.commits (id, repository_id) ON DELETE CASCADE,
-  CONSTRAINT commits_merged_from_same_repo_fk FOREIGN KEY (merged_from_commit_id, repository_id) REFERENCES fs.commits (id, repository_id) ON DELETE CASCADE
+  merged_from_commit_id uuid,
+  message text not null,
+  created_at timestamptz not null default now(),
+  constraint commits_id_repository_id_unique unique (id, repository_id),
+  constraint commits_parent_same_repo_fk foreign key (parent_commit_id, repository_id) references fs.commits (id, repository_id) on delete cascade,
+  constraint commits_merged_from_same_repo_fk foreign key (merged_from_commit_id, repository_id) references fs.commits (id, repository_id) on delete cascade
 );
+
 /*
- fs.branches
- -----------
- Represents a named branch pointer within a repository.
- 
- Branches are lightweight; they track a single `head_commit_id` representing the
- "current" commit for that branch.
- 
- Key ideas:
- - New repositories start with a `main` branch whose `head_commit_id` is `NULL`
- until the first commit is created.
- - When creating a new branch, if `head_commit_id` is omitted, we default it to
- the repository's default branch head (when resolvable).
- 
- Columns:
- - id (uuid): Branch identifier.
- - repository_id (uuid): Owning repository.
- - name (text): Branch name, unique per repository.
- - head_commit_id (uuid, nullable): Head commit for this branch. Nullable to
- support empty repositories and empty branches.
- - created_at (timestamptz): Creation timestamp.
- 
- Constraints:
- - UNIQUE(repository_id, name): One branch with a given name per repo.
- - branches_head_commit_same_repo_fk:
- Enforces that the head commit belongs to the same repository.
- */
-CREATE TABLE fs.branches (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  repository_id UUID NOT NULL REFERENCES fs.repositories(id) ON DELETE CASCADE,
-  name TEXT NOT NULL,
+fs.branches
+-----------
+represents a named branch pointer within a repository.
+
+branches are lightweight; they track a single `head_commit_id` representing the
+"current" commit for that branch.
+
+key ideas:
+- new repositories start with a `main` branch whose `head_commit_id` is `null`
+until the first commit is created.
+- when creating a new branch, if `head_commit_id` is omitted, we default it to
+the repository's default branch head (when resolvable).
+
+columns:
+- id (uuid): branch identifier.
+- repository_id (uuid): owning repository.
+- name (text): branch name, unique per repository.
+- head_commit_id (uuid, nullable): head commit for this branch. nullable to
+support empty repositories and empty branches.
+- created_at (timestamptz): creation timestamp.
+
+constraints:
+- unique(repository_id, name): one branch with a given name per repo.
+- branches_head_commit_same_repo_fk:
+enforces that the head commit belongs to the same repository.
+*/
+create table fs.branches (
+  id uuid primary key default gen_random_uuid(),
+  repository_id uuid not null references fs.repositories (id) on delete cascade,
+  name text not null,
   -- Nullable: new repositories start with an empty default branch until the first commit is created.
-  head_commit_id UUID,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(repository_id, name),
+  head_commit_id uuid,
+  created_at timestamptz not null default now(),
+  unique (repository_id, name),
   -- Each repo can have only one branch with a given name
-  CONSTRAINT branches_id_repository_id_unique UNIQUE (id, repository_id),
-  CONSTRAINT branches_head_commit_same_repo_fk FOREIGN KEY (head_commit_id, repository_id) REFERENCES fs.commits (id, repository_id)
+  constraint branches_id_repository_id_unique unique (id, repository_id),
+  constraint branches_head_commit_same_repo_fk foreign key (head_commit_id, repository_id) references fs.commits (id, repository_id)
 );
+
 /*
- fs.files
- --------
- Stores file writes (and deletions) that occur in a given commit.
- 
- This table is the fundamental "content store":
- - Each commit writes a *delta* (not a full snapshot).
- - Reads and snapshots resolve by walking commit ancestry and selecting the
- newest entry for each path.
- 
- File states:
- - Normal file: `is_deleted = FALSE`, `is_symlink = FALSE`, `content` is file text.
- - Tombstone delete: `is_deleted = TRUE` (path is deleted at that commit).
- - Symlink: `is_symlink = TRUE` and `content` is the normalized absolute target.
- 
- Important behavior (enforced by triggers):
- - `path` is always stored in canonical form via `fs._normalize_path`.
- - When `is_symlink = TRUE`, `content` is normalized as a path (symlink target).
- - When `is_deleted = TRUE`, we force `is_symlink = FALSE` and `content = ''`.
- 
- Columns:
- - id (uuid): File row identifier.
- - commit_id (uuid): Commit containing this file delta (FK → fs.commits).
- - path (text): Canonical absolute path.
- - content (text): File content OR (when symlink) normalized target path.
- - is_deleted (boolean): Tombstone flag.
- - is_symlink (boolean): Symlink flag.
- - created_at (timestamptz): Insert timestamp.
- 
- Constraints:
- - UNIQUE(commit_id, path): At most one write per path per commit.
- */
-CREATE TABLE fs.files (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  commit_id UUID NOT NULL REFERENCES fs.commits(id) ON DELETE CASCADE,
-  path TEXT NOT NULL,
-  content TEXT NOT NULL,
-  is_deleted BOOLEAN NOT NULL DEFAULT FALSE,
-  is_symlink BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE(commit_id, path)
+fs.files
+--------
+stores file writes (and deletions) that occur in a given commit.
+
+this table is the fundamental "content store":
+- each commit writes a *delta* (not a full snapshot).
+- reads and snapshots resolve by walking commit ancestry and selecting the
+newest entry for each path.
+
+file states:
+- normal file: `is_deleted = false`, `is_symlink = false`, `content` is file text.
+- tombstone delete: `is_deleted = true` (path is deleted at that commit).
+- symlink: `is_symlink = true` and `content` is the normalized absolute target.
+
+important behavior (enforced by triggers):
+- `path` is always stored in canonical form via `fs._normalize_path`.
+- when `is_symlink = true`, `content` is normalized as a path (symlink target).
+- when `is_deleted = true`, we force `is_symlink = false` and `content = ''`.
+
+columns:
+- id (uuid): file row identifier.
+- commit_id (uuid): commit containing this file delta (fk → fs.commits).
+- path (text): canonical absolute path.
+- content (text): file content or (when symlink) normalized target path.
+- is_deleted (boolean): tombstone flag.
+- is_symlink (boolean): symlink flag.
+- created_at (timestamptz): insert timestamp.
+
+constraints:
+- unique(commit_id, path): at most one write per path per commit.
+*/
+create table fs.files (
+  id uuid primary key default gen_random_uuid(),
+  commit_id uuid not null references fs.commits (id) on delete cascade,
+  path text not null,
+  content text not null,
+  is_deleted boolean not null default false,
+  is_symlink boolean not null default false,
+  created_at timestamptz not null default now(),
+  unique (commit_id, path)
 );
+
 /*
- Repository ↔ default branch relationship
- --------------------------------------
- We want `fs.repositories.default_branch_id` to reference a branch **in the same
- repository**. We achieve this by:
- - giving `fs.branches` a composite uniqueness target `(id, repository_id)`, and
- - referencing it from repositories using `(default_branch_id, id)`.
- */
-ALTER TABLE fs.repositories
-ADD CONSTRAINT repositories_default_branch_same_repo_fk FOREIGN KEY (default_branch_id, id) REFERENCES fs.branches (id, repository_id) ON DELETE
-SET NULL;
+repository ↔ default branch relationship
+--------------------------------------
+we want `fs.repositories.default_branch_id` to reference a branch **in the same
+repository**. we achieve this by:
+- giving `fs.branches` a composite uniqueness target `(id, repository_id)`, and
+- referencing it from repositories using `(default_branch_id, id)`.
+*/
+alter table fs.repositories
+add constraint repositories_default_branch_same_repo_fk foreign key (default_branch_id, id) references fs.branches (id, repository_id) on delete set null;
+
 /*
- Common usage patterns (examples)
- --------------------------------
- 
- Note: This system intentionally keeps the core tables **direct-write**. That
- means callers typically do two things explicitly:
- - Insert commits/files into the `fs.*` tables, and
- - Move branch heads forward via `UPDATE fs.branches ...`.
- 
- Create a repository (auto-creates `main` branch; it starts empty):
- 
- INSERT INTO fs.repositories (name) VALUES ('my-repo') RETURNING id, default_branch_id;
- 
- Create the first/root commit (parent is NULL by definition):
- 
- INSERT INTO fs.commits (repository_id, message, parent_commit_id)
- VALUES ($repo_id, 'Initial commit', NULL)
- RETURNING id;
- 
- Advance the branch head to the new commit:
- 
- UPDATE fs.branches
- SET head_commit_id = $commit_id
- WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE id = $repo_id);
- 
- Write files into the commit (paths are normalized on insert):
- 
- INSERT INTO fs.files (commit_id, path, content)
- VALUES ($commit_id, 'src/index.ts', 'console.log(\"hi\")');
- 
- Read a file at a commit (resolves through ancestors):
- 
- SELECT fs.read_file($commit_id, '/src/index.ts');
- 
- Browse content:
- 
- -- Files written in a specific commit (delta)
- SELECT path, is_deleted, is_symlink FROM fs.get_commit_delta($commit_id);
- 
- -- Fully resolved tree at a commit (snapshot)
- SELECT path, is_symlink FROM fs.get_commit_snapshot($commit_id, '/src/');
- 
- Merge / rebase (linear history):
- 
- -- Merge source into target:
- -- 1) INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id) ...
- -- 2) INSERT INTO fs.files (...) for any conflicting paths you want to resolve manually.
- -- 3) SELECT * FROM fs.finalize_commit($merge_commit_id, $target_branch_id);
- 
- -- Rebase branch onto another branch head (may fast-forward, noop, or create a single replay commit)
- SELECT * FROM fs.rebase_branch($branch_id, $onto_branch_id, 'Rebase message');
- */
+common usage patterns (examples)
+--------------------------------
+
+note: this system intentionally keeps the core tables **direct-write**. that
+means callers typically do two things explicitly:
+- insert commits/files into the `fs.*` tables, and
+- move branch heads forward via `update fs.branches ...`.
+
+create a repository (auto-creates `main` branch; it starts empty):
+
+insert into fs.repositories (name) values ('my-repo') returning id, default_branch_id;
+
+create the first/root commit (parent is null by definition):
+
+insert into fs.commits (repository_id, message, parent_commit_id)
+values ($repo_id, 'initial commit', null)
+returning id;
+
+advance the branch head to the new commit:
+
+update fs.branches
+set head_commit_id = $commit_id
+where id = (select default_branch_id from fs.repositories where id = $repo_id);
+
+write files into the commit (paths are normalized on insert):
+
+insert into fs.files (commit_id, path, content)
+values ($commit_id, 'src/index.ts', 'console.log(\"hi\")');
+
+read a file at a commit (resolves through ancestors):
+
+select fs.read_file($commit_id, '/src/index.ts');
+
+browse content:
+
+-- Files written in a specific commit (delta)
+select path, is_deleted, is_symlink from fs.get_commit_delta($commit_id);
+
+-- Fully resolved tree at a commit (snapshot)
+select path, is_symlink from fs.get_commit_snapshot($commit_id, '/src/');
+
+merge / rebase (linear history):
+
+-- Merge source into target:
+-- 1) INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id) ...
+-- 2) INSERT INTO fs.files (...) for any conflicting paths you want to resolve manually.
+-- 3) SELECT * FROM fs.finalize_commit($merge_commit_id, $target_branch_id);
+
+-- Rebase branch onto another branch head (may fast-forward, noop, or create a single replay commit)
+select * from fs.rebase_branch($branch_id, $onto_branch_id, 'rebase message');
+*/
 -- ========================================
 -- PATHS (VALIDATION + NORMALIZATION)
 -- ========================================
 /*
- fs._validate_path(p_path text) -> void
- -------------------------------------
- Internal validation routine shared by path normalization and write triggers.
- 
- Validation goals:
- - Prevent malformed / dangerous paths (null/empty, too long, control chars).
- - Ensure cross-platform filesystem compatibility:
- - Reject Windows-invalid characters: < > : " | ? *
- - Reject NUL bytes and other control characters (except tab/newline/CR).
- 
- Notes:
- - We do not attempt to interpret `..` components; this system treats paths as
- opaque strings after normalization. (If you want to prevent traversal-like
- semantics, enforce that at a higher layer.)
- */
-CREATE OR REPLACE FUNCTION fs._validate_path(p_path TEXT) RETURNS VOID AS $$
-DECLARE char_code INT;
-BEGIN -- Check for null or empty path
-IF p_path IS NULL
-OR LENGTH(TRIM(p_path)) = 0 THEN RAISE EXCEPTION 'Path cannot be null or empty';
-END IF;
+fs._validate_path(p_path text) -> void
+-------------------------------------
+internal validation routine shared by path normalization and write triggers.
+
+validation goals:
+- prevent malformed / dangerous paths (null/empty, too long, control chars).
+- ensure cross-platform filesystem compatibility:
+- reject windows-invalid characters: < > : " | ? *
+- reject nul bytes and other control characters (except tab/newline/cr).
+
+notes:
+- we do not attempt to interpret `..` components; this system treats paths as
+opaque strings after normalization. (if you want to prevent traversal-like
+semantics, enforce that at a higher layer.)
+*/
+create or replace function fs._validate_path (p_path text) returns void as $$
+declare char_code int;
+begin -- check for null or empty path
+if p_path is null
+or length(trim(p_path)) = 0 then raise exception 'Path cannot be null or empty';
+end if;
 -- Check for very long paths (over 4096 characters)
-IF LENGTH(p_path) > 4096 THEN RAISE EXCEPTION 'Path is too long (maximum 4096 characters)';
-END IF;
+if length(p_path) > 4096 then raise exception 'Path is too long (maximum 4096 characters)';
+end if;
 -- Check for control characters (invalid on Windows, problematic on Unix)
 -- Allow tab (\x09), newline (\x0A), carriage return (\x0D)
-FOR i IN 1..LENGTH(p_path) LOOP char_code := ASCII(
-  SUBSTRING(
+for i in 1..length(p_path) loop char_code := ascii(
+  substring(
     p_path
-    FROM i FOR 1
+    from i for 1
   )
 );
-IF char_code < 32
-AND char_code NOT IN (9, 10, 13) THEN RAISE EXCEPTION 'Path contains control characters (0x%x)',
-LPAD(UPPER(TO_HEX(char_code)), 2, '0');
-END IF;
-END LOOP;
+if char_code < 32
+and char_code not in (9, 10, 13) then raise exception 'Path contains control characters (0x%x)',
+lpad(upper(to_hex(char_code)), 2, '0');
+end if;
+end loop;
 -- Check for characters invalid on Windows: < > : " | ? *
 -- Note: / and \ are allowed as path separators
-IF p_path ~ '[<>"|?*:]' THEN RAISE EXCEPTION 'Path contains characters invalid on Windows: < > : " | ? *';
-END IF;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+if p_path ~ '[<>"|?*:]' then raise exception 'Path contains characters invalid on Windows: < > : " | ? *';
+end if;
+end;
+$$ language plpgsql immutable parallel safe;
+
 /*
- fs.rebase_branch(p_branch_id uuid, p_onto_branch_id uuid, p_message text default NULL)
- -> TABLE(operation text, repository_id uuid, branch_id uuid, onto_branch_id uuid,
- merge_base_commit_id uuid, previous_branch_head_commit_id uuid,
- onto_head_commit_id uuid, rebased_commit_id uuid,
- new_branch_head_commit_id uuid, applied_file_count int)
- ------------------------------------------------------------------------------------
- Performs a **squash rebase** of one branch onto another branch's head.
- 
- Why "squash":
- - This system stores a single-parent commit graph, so we cannot replay per-commit
- changes while preserving a multi-parent merge history.
- - Instead, we compute the branch's **net effect since the merge base** and apply
- that patch as a single new commit on top of `onto`.
- 
- Algorithm (conceptual):
- - Resolve `branch_head` and `onto_head` from the provided branch ids.
- - Compute `merge_base := fs.get_merge_base(branch_head, onto_head)`.
- 
- Cases:
- - `p_branch_id = p_onto_branch_id` → `operation = 'noop'`.
- - `merge_base = onto_head` → `operation = 'already_up_to_date'`
- (the onto head is already contained in the branch history).
- - `merge_base = branch_head` → `operation = 'fast_forward'`
- (the branch is behind; we can move the branch head to `onto_head`).
- - Otherwise:
- - If `fs.get_conflicts(branch_head, onto_head)` returns any rows, the rebase
- is blocked and this function raises an exception.
- - Create a new commit whose parent is `onto_head`.
- - Apply the minimal patch that transforms the `onto_head` snapshot into:
- "onto snapshot + branch's net changes since merge_base".
- - Update the branch head to the new commit and return `operation = 'rebased'`.
- 
- Return values:
- - `rebased_commit_id` is `NULL` for non-creating operations (`noop`,
- `already_up_to_date`, `fast_forward`).
- - `applied_file_count` is the number of rows inserted into `fs.files` for the
- rebased commit (tombstones + writes). It is `0` when no new commit is created.
- 
- Preconditions / notes:
- - Both branches must exist and belong to the same repository.
- - Branch heads must be non-NULL for diverged-history rebases (otherwise
- `fs.get_merge_base` will raise `commit_id must be specified`).
- */
-CREATE OR REPLACE FUNCTION fs.rebase_branch(
-    p_branch_id UUID,
-    p_onto_branch_id UUID,
-    p_message TEXT DEFAULT NULL
-  ) RETURNS TABLE(
-    operation TEXT,
-    repository_id UUID,
-    branch_id UUID,
-    onto_branch_id UUID,
-    merge_base_commit_id UUID,
-    previous_branch_head_commit_id UUID,
-    onto_head_commit_id UUID,
-    rebased_commit_id UUID,
-    new_branch_head_commit_id UUID,
-    applied_file_count INT
-  ) AS $$
-DECLARE v_branch_repo_id UUID;
-v_onto_repo_id UUID;
-v_branch_head_commit_id UUID;
-v_onto_head_commit_id UUID;
-v_merge_base_commit_id UUID;
-v_conflict_count INT := 0;
-v_delete_count INT := 0;
-v_write_count INT := 0;
-v_rows INT := 0;
-v_rebased_commit_id UUID;
-v_message TEXT;
-BEGIN IF p_branch_id IS NULL
-OR p_onto_branch_id IS NULL THEN RAISE EXCEPTION 'branch_id must be specified';
-END IF;
-SELECT b.repository_id,
-  b.head_commit_id INTO v_branch_repo_id,
+fs.rebase_branch(p_branch_id uuid, p_onto_branch_id uuid, p_message text default null)
+-> table(operation text, repository_id uuid, branch_id uuid, onto_branch_id uuid,
+merge_base_commit_id uuid, previous_branch_head_commit_id uuid,
+onto_head_commit_id uuid, rebased_commit_id uuid,
+new_branch_head_commit_id uuid, applied_file_count int)
+------------------------------------------------------------------------------------
+performs a **squash rebase** of one branch onto another branch's head.
+
+why "squash":
+- this system stores a single-parent commit graph, so we cannot replay per-commit
+changes while preserving a multi-parent merge history.
+- instead, we compute the branch's **net effect since the merge base** and apply
+that patch as a single new commit on top of `onto`.
+
+algorithm (conceptual):
+- resolve `branch_head` and `onto_head` from the provided branch ids.
+- compute `merge_base := fs.get_merge_base(branch_head, onto_head)`.
+
+cases:
+- `p_branch_id = p_onto_branch_id` → `operation = 'noop'`.
+- `merge_base = onto_head` → `operation = 'already_up_to_date'`
+(the onto head is already contained in the branch history).
+- `merge_base = branch_head` → `operation = 'fast_forward'`
+(the branch is behind; we can move the branch head to `onto_head`).
+- otherwise:
+- if `fs.get_conflicts(branch_head, onto_head)` returns any rows, the rebase
+is blocked and this function raises an exception.
+- create a new commit whose parent is `onto_head`.
+- apply the minimal patch that transforms the `onto_head` snapshot into:
+"onto snapshot + branch's net changes since merge_base".
+- update the branch head to the new commit and return `operation = 'rebased'`.
+
+return values:
+- `rebased_commit_id` is `null` for non-creating operations (`noop`,
+`already_up_to_date`, `fast_forward`).
+- `applied_file_count` is the number of rows inserted into `fs.files` for the
+rebased commit (tombstones + writes). it is `0` when no new commit is created.
+
+preconditions / notes:
+- both branches must exist and belong to the same repository.
+- branch heads must be non-null for diverged-history rebases (otherwise
+`fs.get_merge_base` will raise `commit_id must be specified`).
+*/
+create or replace function fs.rebase_branch (
+  p_branch_id uuid,
+  p_onto_branch_id uuid,
+  p_message text default null
+) returns table (
+  operation text,
+  repository_id uuid,
+  branch_id uuid,
+  onto_branch_id uuid,
+  merge_base_commit_id uuid,
+  previous_branch_head_commit_id uuid,
+  onto_head_commit_id uuid,
+  rebased_commit_id uuid,
+  new_branch_head_commit_id uuid,
+  applied_file_count int
+) as $$
+declare v_branch_repo_id uuid;
+v_onto_repo_id uuid;
+v_branch_head_commit_id uuid;
+v_onto_head_commit_id uuid;
+v_merge_base_commit_id uuid;
+v_conflict_count int := 0;
+v_delete_count int := 0;
+v_write_count int := 0;
+v_rows int := 0;
+v_rebased_commit_id uuid;
+v_message text;
+begin if p_branch_id is null
+or p_onto_branch_id is null then raise exception 'Branch_id must be specified';
+end if;
+select b.repository_id,
+  b.head_commit_id into v_branch_repo_id,
   v_branch_head_commit_id
-FROM fs.branches b
-WHERE b.id = p_branch_id;
-IF v_branch_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid branch_id: branch does not exist';
-END IF;
-SELECT b.repository_id,
-  b.head_commit_id INTO v_onto_repo_id,
+from fs.branches b
+where b.id = p_branch_id;
+if v_branch_repo_id is null then raise exception 'Invalid branch_id: branch does not exist';
+end if;
+select b.repository_id,
+  b.head_commit_id into v_onto_repo_id,
   v_onto_head_commit_id
-FROM fs.branches b
-WHERE b.id = p_onto_branch_id;
-IF v_onto_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid onto_branch_id: branch does not exist';
-END IF;
-IF v_branch_repo_id <> v_onto_repo_id THEN RAISE EXCEPTION 'Branches must belong to the same repository';
-END IF;
+from fs.branches b
+where b.id = p_onto_branch_id;
+if v_onto_repo_id is null then raise exception 'Invalid onto_branch_id: branch does not exist';
+end if;
+if v_branch_repo_id <> v_onto_repo_id then raise exception 'Branches must belong to the same repository';
+end if;
 repository_id := v_branch_repo_id;
 branch_id := p_branch_id;
 onto_branch_id := p_onto_branch_id;
 previous_branch_head_commit_id := v_branch_head_commit_id;
 onto_head_commit_id := v_onto_head_commit_id;
-IF p_branch_id = p_onto_branch_id THEN operation := 'noop';
+if p_branch_id = p_onto_branch_id then operation := 'noop';
 merge_base_commit_id := v_branch_head_commit_id;
-rebased_commit_id := NULL;
+rebased_commit_id := null;
 new_branch_head_commit_id := v_branch_head_commit_id;
 applied_file_count := 0;
-RETURN NEXT;
-RETURN;
-END IF;
+return next;
+return;
+end if;
 v_merge_base_commit_id := fs.get_merge_base(v_branch_head_commit_id, v_onto_head_commit_id);
 merge_base_commit_id := v_merge_base_commit_id;
 -- If onto is already an ancestor of the branch, nothing to do.
-IF v_merge_base_commit_id = v_onto_head_commit_id THEN operation := 'already_up_to_date';
-rebased_commit_id := NULL;
+if v_merge_base_commit_id = v_onto_head_commit_id then operation := 'already_up_to_date';
+rebased_commit_id := null;
 new_branch_head_commit_id := v_branch_head_commit_id;
 applied_file_count := 0;
-RETURN NEXT;
-RETURN;
-END IF;
+return next;
+return;
+end if;
 -- If branch is an ancestor of onto, fast-forward the branch.
-IF v_merge_base_commit_id = v_branch_head_commit_id THEN
-UPDATE fs.branches
-SET head_commit_id = v_onto_head_commit_id
-WHERE id = p_branch_id;
+if v_merge_base_commit_id = v_branch_head_commit_id then
+update fs.branches
+set head_commit_id = v_onto_head_commit_id
+where id = p_branch_id;
 operation := 'fast_forward';
-rebased_commit_id := NULL;
+rebased_commit_id := null;
 new_branch_head_commit_id := v_onto_head_commit_id;
 applied_file_count := 0;
-RETURN NEXT;
-RETURN;
-END IF;
+return next;
+return;
+end if;
 -- Abort on conflicts.
-SELECT COUNT(*)::INT INTO v_conflict_count
-FROM fs.get_conflicts(v_branch_head_commit_id, v_onto_head_commit_id);
-IF v_conflict_count > 0 THEN RAISE EXCEPTION 'Rebase blocked by % conflicts. Call fs.get_conflicts(%, %) to inspect.',
+select count(*)::int into v_conflict_count
+from fs.get_conflicts(v_branch_head_commit_id, v_onto_head_commit_id);
+if v_conflict_count > 0 then raise exception 'Rebase blocked by % conflicts. call fs.get_conflicts(%, %) to inspect.',
 v_conflict_count,
 v_branch_head_commit_id,
 v_onto_head_commit_id;
-END IF;
+end if;
 -- Compute the minimal patch to apply onto the onto head (no redundant writes).
-WITH base_snapshot AS (
-  SELECT s.path,
+with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
 ),
-onto_snapshot AS (
-  SELECT s.path,
+onto_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
 ),
-branch_snapshot AS (
-  SELECT s.path,
+branch_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT o.path AS file_path
-  FROM onto_snapshot o
-  UNION
-  SELECT br.path AS file_path
-  FROM branch_snapshot br
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select o.path as file_path
+  from onto_snapshot o
+  union
+  select br.path as file_path
+  from branch_snapshot br
 ),
-states AS (
-  SELECT p.file_path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (o.path IS NOT NULL) AS onto_exists,
-    o.is_symlink AS onto_is_symlink,
-    o.content AS onto_content,
-    (br.path IS NOT NULL) AS branch_exists,
-    br.is_symlink AS branch_is_symlink,
-    br.content AS branch_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN onto_snapshot o ON o.path = p.file_path
-    LEFT JOIN branch_snapshot br ON br.path = p.file_path
+states as (
+  select p.file_path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (o.path is not null) as onto_exists,
+    o.is_symlink as onto_is_symlink,
+    o.content as onto_content,
+    (br.path is not null) as branch_exists,
+    br.is_symlink as branch_is_symlink,
+    br.content as branch_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join onto_snapshot o on o.path = p.file_path
+    left join branch_snapshot br on br.path = p.file_path
 ),
-diffs AS (
-  SELECT st.*,
+diffs as (
+  select st.*,
     (
-      st.branch_exists IS DISTINCT
-      FROM st.base_exists
-        OR st.branch_is_symlink IS DISTINCT
-      FROM st.base_is_symlink
-        OR st.branch_content IS DISTINCT
-      FROM st.base_content
-    ) AS branch_changed
-  FROM states st
+      st.branch_exists is distinct
+      from st.base_exists
+        or st.branch_is_symlink is distinct
+      from st.base_is_symlink
+        or st.branch_content is distinct
+      from st.base_content
+    ) as branch_changed
+  from states st
 ),
-desired AS (
-  SELECT d.file_path,
-    CASE
-      WHEN d.branch_changed THEN d.branch_exists
-      ELSE d.onto_exists
-    END AS desired_exists,
-    CASE
-      WHEN d.branch_changed THEN d.branch_is_symlink
-      ELSE d.onto_is_symlink
-    END AS desired_is_symlink,
-    CASE
-      WHEN d.branch_changed THEN d.branch_content
-      ELSE d.onto_content
-    END AS desired_content,
+desired as (
+  select d.file_path,
+    case
+      when d.branch_changed then d.branch_exists
+      else d.onto_exists
+    end as desired_exists,
+    case
+      when d.branch_changed then d.branch_is_symlink
+      else d.onto_is_symlink
+    end as desired_is_symlink,
+    case
+      when d.branch_changed then d.branch_content
+      else d.onto_content
+    end as desired_content,
     d.onto_exists,
     d.onto_is_symlink,
     d.onto_content
-  FROM diffs d
+  from diffs d
 ),
-patch AS (
-  SELECT de.file_path,
+patch as (
+  select de.file_path,
     de.desired_exists,
     de.desired_is_symlink,
     de.desired_content,
     (
-      NOT de.desired_exists
-      AND de.onto_exists
-    ) AS need_delete,
+      not de.desired_exists
+      and de.onto_exists
+    ) as need_delete,
     (
       de.desired_exists
-      AND (
-        (NOT de.onto_exists)
-        OR de.onto_is_symlink IS DISTINCT
-        FROM de.desired_is_symlink
-          OR de.onto_content IS DISTINCT
-        FROM de.desired_content
+      and (
+        (not de.onto_exists)
+        or de.onto_is_symlink is distinct
+        from de.desired_is_symlink
+          or de.onto_content is distinct
+        from de.desired_content
       )
-    ) AS need_write
-  FROM desired de
+    ) as need_write
+  from desired de
 )
-SELECT COALESCE(
-    SUM(
-      CASE
-        WHEN p.need_delete THEN 1
-        ELSE 0
-      END
+select coalesce(
+    sum(
+      case
+        when p.need_delete then 1
+        else 0
+      end
     ),
     0
-  )::INT,
-  COALESCE(
-    SUM(
-      CASE
-        WHEN p.need_write THEN 1
-        ELSE 0
-      END
+  )::int,
+  coalesce(
+    sum(
+      case
+        when p.need_write then 1
+        else 0
+      end
     ),
     0
-  )::INT INTO v_delete_count,
+  )::int into v_delete_count,
   v_write_count
-FROM patch p;
+from patch p;
 -- If rebasing would not change the onto snapshot, just move the branch to onto.
-IF (v_delete_count + v_write_count) = 0 THEN
-UPDATE fs.branches
-SET head_commit_id = v_onto_head_commit_id
-WHERE id = p_branch_id;
+if (v_delete_count + v_write_count) = 0 then
+update fs.branches
+set head_commit_id = v_onto_head_commit_id
+where id = p_branch_id;
 operation := 'fast_forward';
-rebased_commit_id := NULL;
+rebased_commit_id := null;
 new_branch_head_commit_id := v_onto_head_commit_id;
 applied_file_count := 0;
-RETURN NEXT;
-RETURN;
-END IF;
-v_message := COALESCE(p_message, 'Rebase');
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-VALUES (
+return next;
+return;
+end if;
+v_message := coalesce(p_message, 'rebase');
+insert into fs.commits (repository_id, parent_commit_id, message)
+values (
     v_branch_repo_id,
     v_onto_head_commit_id,
     v_message
   )
-RETURNING id INTO v_rebased_commit_id;
+returning id into v_rebased_commit_id;
 -- Apply deletions
-WITH base_snapshot AS (
-  SELECT s.path,
+with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
 ),
-onto_snapshot AS (
-  SELECT s.path,
+onto_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
 ),
-branch_snapshot AS (
-  SELECT s.path,
+branch_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT o.path AS file_path
-  FROM onto_snapshot o
-  UNION
-  SELECT br.path AS file_path
-  FROM branch_snapshot br
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select o.path as file_path
+  from onto_snapshot o
+  union
+  select br.path as file_path
+  from branch_snapshot br
 ),
-states AS (
-  SELECT p.file_path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (o.path IS NOT NULL) AS onto_exists,
-    o.is_symlink AS onto_is_symlink,
-    o.content AS onto_content,
-    (br.path IS NOT NULL) AS branch_exists,
-    br.is_symlink AS branch_is_symlink,
-    br.content AS branch_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN onto_snapshot o ON o.path = p.file_path
-    LEFT JOIN branch_snapshot br ON br.path = p.file_path
+states as (
+  select p.file_path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (o.path is not null) as onto_exists,
+    o.is_symlink as onto_is_symlink,
+    o.content as onto_content,
+    (br.path is not null) as branch_exists,
+    br.is_symlink as branch_is_symlink,
+    br.content as branch_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join onto_snapshot o on o.path = p.file_path
+    left join branch_snapshot br on br.path = p.file_path
 ),
-diffs AS (
-  SELECT st.*,
+diffs as (
+  select st.*,
     (
-      st.branch_exists IS DISTINCT
-      FROM st.base_exists
-        OR st.branch_is_symlink IS DISTINCT
-      FROM st.base_is_symlink
-        OR st.branch_content IS DISTINCT
-      FROM st.base_content
-    ) AS branch_changed
-  FROM states st
+      st.branch_exists is distinct
+      from st.base_exists
+        or st.branch_is_symlink is distinct
+      from st.base_is_symlink
+        or st.branch_content is distinct
+      from st.base_content
+    ) as branch_changed
+  from states st
 ),
-desired AS (
-  SELECT d.file_path,
-    CASE
-      WHEN d.branch_changed THEN d.branch_exists
-      ELSE d.onto_exists
-    END AS desired_exists,
-    CASE
-      WHEN d.branch_changed THEN d.branch_is_symlink
-      ELSE d.onto_is_symlink
-    END AS desired_is_symlink,
-    CASE
-      WHEN d.branch_changed THEN d.branch_content
-      ELSE d.onto_content
-    END AS desired_content,
+desired as (
+  select d.file_path,
+    case
+      when d.branch_changed then d.branch_exists
+      else d.onto_exists
+    end as desired_exists,
+    case
+      when d.branch_changed then d.branch_is_symlink
+      else d.onto_is_symlink
+    end as desired_is_symlink,
+    case
+      when d.branch_changed then d.branch_content
+      else d.onto_content
+    end as desired_content,
     d.onto_exists,
     d.onto_is_symlink,
     d.onto_content
-  FROM diffs d
+  from diffs d
 ),
-patch AS (
-  SELECT de.file_path,
+patch as (
+  select de.file_path,
     de.desired_exists,
     de.desired_is_symlink,
     de.desired_content,
     (
-      NOT de.desired_exists
-      AND de.onto_exists
-    ) AS need_delete,
+      not de.desired_exists
+      and de.onto_exists
+    ) as need_delete,
     (
       de.desired_exists
-      AND (
-        (NOT de.onto_exists)
-        OR de.onto_is_symlink IS DISTINCT
-        FROM de.desired_is_symlink
-          OR de.onto_content IS DISTINCT
-        FROM de.desired_content
+      and (
+        (not de.onto_exists)
+        or de.onto_is_symlink is distinct
+        from de.desired_is_symlink
+          or de.onto_content is distinct
+        from de.desired_content
       )
-    ) AS need_write
-  FROM desired de
+    ) as need_write
+  from desired de
 )
-INSERT INTO fs.files (commit_id, path, content, is_deleted, is_symlink)
-SELECT v_rebased_commit_id,
+insert into fs.files (commit_id, path, content, is_deleted, is_symlink)
+select v_rebased_commit_id,
   p.file_path,
   '',
-  TRUE,
-  FALSE
-FROM patch p
-WHERE p.need_delete;
-GET DIAGNOSTICS v_rows = ROW_COUNT;
+  true,
+  false
+from patch p
+where p.need_delete;
+get diagnostics v_rows = row_count;
 applied_file_count := v_rows;
 -- Apply writes
-WITH base_snapshot AS (
-  SELECT s.path,
+with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
 ),
-onto_snapshot AS (
-  SELECT s.path,
+onto_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_onto_head_commit_id) s
 ),
-branch_snapshot AS (
-  SELECT s.path,
+branch_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT o.path AS file_path
-  FROM onto_snapshot o
-  UNION
-  SELECT br.path AS file_path
-  FROM branch_snapshot br
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select o.path as file_path
+  from onto_snapshot o
+  union
+  select br.path as file_path
+  from branch_snapshot br
 ),
-states AS (
-  SELECT p.file_path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (o.path IS NOT NULL) AS onto_exists,
-    o.is_symlink AS onto_is_symlink,
-    o.content AS onto_content,
-    (br.path IS NOT NULL) AS branch_exists,
-    br.is_symlink AS branch_is_symlink,
-    br.content AS branch_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN onto_snapshot o ON o.path = p.file_path
-    LEFT JOIN branch_snapshot br ON br.path = p.file_path
+states as (
+  select p.file_path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (o.path is not null) as onto_exists,
+    o.is_symlink as onto_is_symlink,
+    o.content as onto_content,
+    (br.path is not null) as branch_exists,
+    br.is_symlink as branch_is_symlink,
+    br.content as branch_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join onto_snapshot o on o.path = p.file_path
+    left join branch_snapshot br on br.path = p.file_path
 ),
-diffs AS (
-  SELECT st.*,
+diffs as (
+  select st.*,
     (
-      st.branch_exists IS DISTINCT
-      FROM st.base_exists
-        OR st.branch_is_symlink IS DISTINCT
-      FROM st.base_is_symlink
-        OR st.branch_content IS DISTINCT
-      FROM st.base_content
-    ) AS branch_changed
-  FROM states st
+      st.branch_exists is distinct
+      from st.base_exists
+        or st.branch_is_symlink is distinct
+      from st.base_is_symlink
+        or st.branch_content is distinct
+      from st.base_content
+    ) as branch_changed
+  from states st
 ),
-desired AS (
-  SELECT d.file_path,
-    CASE
-      WHEN d.branch_changed THEN d.branch_exists
-      ELSE d.onto_exists
-    END AS desired_exists,
-    CASE
-      WHEN d.branch_changed THEN d.branch_is_symlink
-      ELSE d.onto_is_symlink
-    END AS desired_is_symlink,
-    CASE
-      WHEN d.branch_changed THEN d.branch_content
-      ELSE d.onto_content
-    END AS desired_content,
+desired as (
+  select d.file_path,
+    case
+      when d.branch_changed then d.branch_exists
+      else d.onto_exists
+    end as desired_exists,
+    case
+      when d.branch_changed then d.branch_is_symlink
+      else d.onto_is_symlink
+    end as desired_is_symlink,
+    case
+      when d.branch_changed then d.branch_content
+      else d.onto_content
+    end as desired_content,
     d.onto_exists,
     d.onto_is_symlink,
     d.onto_content
-  FROM diffs d
+  from diffs d
 ),
-patch AS (
-  SELECT de.file_path,
+patch as (
+  select de.file_path,
     de.desired_exists,
     de.desired_is_symlink,
     de.desired_content,
     (
-      NOT de.desired_exists
-      AND de.onto_exists
-    ) AS need_delete,
+      not de.desired_exists
+      and de.onto_exists
+    ) as need_delete,
     (
       de.desired_exists
-      AND (
-        (NOT de.onto_exists)
-        OR de.onto_is_symlink IS DISTINCT
-        FROM de.desired_is_symlink
-          OR de.onto_content IS DISTINCT
-        FROM de.desired_content
+      and (
+        (not de.onto_exists)
+        or de.onto_is_symlink is distinct
+        from de.desired_is_symlink
+          or de.onto_content is distinct
+        from de.desired_content
       )
-    ) AS need_write
-  FROM desired de
+    ) as need_write
+  from desired de
 )
-INSERT INTO fs.files (commit_id, path, content, is_deleted, is_symlink)
-SELECT v_rebased_commit_id,
+insert into fs.files (commit_id, path, content, is_deleted, is_symlink)
+select v_rebased_commit_id,
   p.file_path,
   p.desired_content,
-  FALSE,
-  COALESCE(p.desired_is_symlink, FALSE)
-FROM patch p
-WHERE p.need_write;
-GET DIAGNOSTICS v_rows = ROW_COUNT;
+  false,
+  coalesce(p.desired_is_symlink, false)
+from patch p
+where p.need_write;
+get diagnostics v_rows = row_count;
 applied_file_count := applied_file_count + v_rows;
-UPDATE fs.branches
-SET head_commit_id = v_rebased_commit_id
-WHERE id = p_branch_id;
+update fs.branches
+set head_commit_id = v_rebased_commit_id
+where id = p_branch_id;
 operation := 'rebased';
 rebased_commit_id := v_rebased_commit_id;
 new_branch_head_commit_id := v_rebased_commit_id;
-RETURN NEXT;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+return next;
+end;
+$$ language plpgsql volatile parallel unsafe;
+
 /*
- fs._normalize_path(p_path text) -> text
- --------------------------------------
- Internal helper that canonicalizes a file path for storage and lookup.
- 
- Normalization rules:
- - Validate using `fs._validate_path`.
- - Accept Windows-style separators (`\`) on input but store canonical `/`.
- - Ensure the path is absolute (prefix `/` if missing).
- - Collapse duplicate slashes (`//` → `/`).
- - Remove trailing slash unless the path is exactly `/`.
- 
- Examples:
- - `src/main.ts` → `/src/main.ts`
- - `//src//main.ts` → `/src/main.ts`
- - `/src/main.ts/` → `/src/main.ts`
- - `target.txt` → `/target.txt`
- 
- This function is used by write triggers and read helpers so callers may use a
- variety of input styles while the database stores a single canonical form.
- */
-CREATE OR REPLACE FUNCTION fs._normalize_path(p_path TEXT) RETURNS TEXT AS $$
-DECLARE normalized_path TEXT;
-BEGIN -- First validate the path
-PERFORM fs._validate_path(p_path);
+fs._normalize_path(p_path text) -> text
+--------------------------------------
+internal helper that canonicalizes a file path for storage and lookup.
+
+normalization rules:
+- validate using `fs._validate_path`.
+- accept windows-style separators (`\`) on input but store canonical `/`.
+- ensure the path is absolute (prefix `/` if missing).
+- collapse duplicate slashes (`//` → `/`).
+- remove trailing slash unless the path is exactly `/`.
+
+examples:
+- `src/main.ts` → `/src/main.ts`
+- `//src//main.ts` → `/src/main.ts`
+- `/src/main.ts/` → `/src/main.ts`
+- `target.txt` → `/target.txt`
+
+this function is used by write triggers and read helpers so callers may use a
+variety of input styles while the database stores a single canonical form.
+*/
+create or replace function fs._normalize_path (p_path text) returns text as $$
+declare normalized_path text;
+begin -- first validate the path
+perform fs._validate_path(p_path);
 -- Normalize path separators (accept Windows-style "\" input, store canonical "/" paths)
-normalized_path := REPLACE(p_path, E'\\', '/');
+normalized_path := replace(p_path, e'\\', '/');
 -- Ensure path starts with /
-normalized_path := CASE
-  WHEN normalized_path LIKE '/%' THEN normalized_path
-  ELSE '/' || normalized_path
-END;
+normalized_path := case
+  when normalized_path like '/%' then normalized_path
+  else '/' || normalized_path
+end;
 -- Remove duplicate slashes
-WHILE normalized_path LIKE '%//%' LOOP normalized_path := REPLACE(normalized_path, '//', '/');
-END LOOP;
+while normalized_path like '%//%' loop normalized_path := replace(normalized_path, '//', '/');
+end loop;
 -- Remove trailing slash unless it's just "/"
-IF LENGTH(normalized_path) > 1
-AND normalized_path LIKE '%/' THEN normalized_path := LEFT(normalized_path, LENGTH(normalized_path) - 1);
-END IF;
+if length(normalized_path) > 1
+and normalized_path like '%/' then normalized_path := left(normalized_path, length(normalized_path) - 1);
+end if;
 -- Ensure the normalized output stays within our max length budget
-IF LENGTH(normalized_path) > 4096 THEN RAISE EXCEPTION 'Path is too long (maximum 4096 characters)';
-END IF;
-RETURN normalized_path;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+if length(normalized_path) > 4096 then raise exception 'Path is too long (maximum 4096 characters)';
+end if;
+return normalized_path;
+end;
+$$ language plpgsql immutable parallel safe;
+
 /*
- fs._normalize_path_prefix(p_path_prefix text) -> text
- ----------------------------------------------------
- Internal helper to normalize prefix strings used for prefix searches (e.g.
- `fs.get_commit_snapshot(commit_id, '/src/')`).
- 
- Why this differs from `fs._normalize_path`:
- - For prefix searches we preserve the meaning of an explicit trailing separator.
- For example, an intent of `/src/` usually means "paths under src/", not "paths
- starting with /src" (which would also match `/src-old/...`).
- 
- Rules:
- - Validate using `fs._validate_path`.
- - Accept `\` on input but store canonical `/`.
- - Ensure the prefix is absolute (prefix `/` if missing).
- - Collapse duplicate slashes.
- - If the input ended with `/` or `\`, preserve a trailing `/` in the normalized
- output (except for `/` itself).
- */
-CREATE OR REPLACE FUNCTION fs._normalize_path_prefix(p_path_prefix TEXT) RETURNS TEXT AS $$
-DECLARE normalized_prefix TEXT;
-DECLARE has_trailing_slash BOOLEAN;
-BEGIN PERFORM fs._validate_path(p_path_prefix);
-has_trailing_slash := RIGHT(p_path_prefix, 1) = '/'
-OR RIGHT(p_path_prefix, 1) = E'\\';
-normalized_prefix := REPLACE(p_path_prefix, E'\\', '/');
+fs._normalize_path_prefix(p_path_prefix text) -> text
+----------------------------------------------------
+internal helper to normalize prefix strings used for prefix searches (e.g.
+`fs.get_commit_snapshot(commit_id, '/src/')`).
+
+why this differs from `fs._normalize_path`:
+- for prefix searches we preserve the meaning of an explicit trailing separator.
+for example, an intent of `/src/` usually means "paths under src/", not "paths
+starting with /src" (which would also match `/src-old/...`).
+
+rules:
+- validate using `fs._validate_path`.
+- accept `\` on input but store canonical `/`.
+- ensure the prefix is absolute (prefix `/` if missing).
+- collapse duplicate slashes.
+- if the input ended with `/` or `\`, preserve a trailing `/` in the normalized
+output (except for `/` itself).
+*/
+create or replace function fs._normalize_path_prefix (p_path_prefix text) returns text as $$
+declare normalized_prefix text;
+declare has_trailing_slash boolean;
+begin perform fs._validate_path(p_path_prefix);
+has_trailing_slash := right(p_path_prefix, 1) = '/'
+or right(p_path_prefix, 1) = e'\\';
+normalized_prefix := replace(p_path_prefix, e'\\', '/');
 -- Ensure prefix starts with /
-normalized_prefix := CASE
-  WHEN normalized_prefix LIKE '/%' THEN normalized_prefix
-  ELSE '/' || normalized_prefix
-END;
+normalized_prefix := case
+  when normalized_prefix like '/%' then normalized_prefix
+  else '/' || normalized_prefix
+end;
 -- Remove duplicate slashes
-WHILE normalized_prefix LIKE '%//%' LOOP normalized_prefix := REPLACE(normalized_prefix, '//', '/');
-END LOOP;
+while normalized_prefix like '%//%' loop normalized_prefix := replace(normalized_prefix, '//', '/');
+end loop;
 -- Preserve explicit trailing slash (directory-style prefix matching)
-IF has_trailing_slash
-AND normalized_prefix <> '/'
-AND RIGHT(normalized_prefix, 1) <> '/' THEN normalized_prefix := normalized_prefix || '/';
-END IF;
-IF LENGTH(normalized_prefix) > 4096 THEN RAISE EXCEPTION 'Path is too long (maximum 4096 characters)';
-END IF;
-RETURN normalized_prefix;
-END;
-$$ LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE;
+if has_trailing_slash
+and normalized_prefix <> '/'
+and right(normalized_prefix, 1) <> '/' then normalized_prefix := normalized_prefix || '/';
+end if;
+if length(normalized_prefix) > 4096 then raise exception 'Path is too long (maximum 4096 characters)';
+end if;
+return normalized_prefix;
+end;
+$$ language plpgsql immutable parallel safe;
+
 -- ========================================
 -- WRITE-TIME HELPERS (TRIGGER FUNCTIONS)
 -- ========================================
 /*
- fs._commits_before_insert_trigger() -> trigger
- ---------------------------------------------
- BEFORE INSERT trigger on `fs.commits`.
- 
- Primary responsibilities:
- - If `NEW.parent_commit_id` is omitted/NULL, default it to the repository's
- default branch head (when available).
- - This keeps the commit graph well-formed while still allowing the first/root
- commit of a repository to have a NULL parent.
- - Provide clearer error messages than raw FK failures:
- - If commits already exist but we cannot resolve a default parent, require an
- explicit `parent_commit_id`.
- - If a parent is provided, ensure it belongs to the same repository.
- 
- Important: This trigger does **not** advance any branch heads. Branch heads are
- explicit pointers and should be updated intentionally by the caller.
- */
-CREATE OR REPLACE FUNCTION fs._commits_before_insert_trigger() RETURNS TRIGGER AS $$
-DECLARE resolved_parent_commit_id UUID;
-BEGIN -- Validate repository exists (FK would catch this too, but keep a clearer error message).
-IF NOT EXISTS (
-  SELECT 1
-  FROM fs.repositories
-  WHERE id = NEW.repository_id
-) THEN RAISE EXCEPTION 'Invalid repository_id: repository does not exist';
-END IF;
-IF NEW.parent_commit_id IS NULL THEN
-SELECT b.head_commit_id INTO resolved_parent_commit_id
-FROM fs.repositories r
-  JOIN fs.branches b ON b.id = r.default_branch_id
-WHERE r.id = NEW.repository_id;
-IF resolved_parent_commit_id IS NOT NULL THEN NEW.parent_commit_id := resolved_parent_commit_id;
-ELSE -- If commits already exist, we should have been able to resolve a parent.
-IF EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE repository_id = NEW.repository_id
-) THEN RAISE EXCEPTION 'parent_commit_id must be specified (repository default branch head could not be resolved)';
-END IF;
-END IF;
-END IF;
+fs._commits_before_insert_trigger() -> trigger
+---------------------------------------------
+before insert trigger on `fs.commits`.
+
+primary responsibilities:
+- if `new.parent_commit_id` is omitted/null, default it to the repository's
+default branch head (when available).
+- this keeps the commit graph well-formed while still allowing the first/root
+commit of a repository to have a null parent.
+- provide clearer error messages than raw fk failures:
+- if commits already exist but we cannot resolve a default parent, require an
+explicit `parent_commit_id`.
+- if a parent is provided, ensure it belongs to the same repository.
+
+important: this trigger does **not** advance any branch heads. branch heads are
+explicit pointers and should be updated intentionally by the caller.
+*/
+create or replace function fs._commits_before_insert_trigger () returns trigger as $$
+declare resolved_parent_commit_id uuid;
+begin -- validate repository exists (fk would catch this too, but keep a clearer error message).
+if not exists (
+  select 1
+  from fs.repositories
+  where id = new.repository_id
+) then raise exception 'Invalid repository_id: repository does not exist';
+end if;
+if new.parent_commit_id is null then
+select b.head_commit_id into resolved_parent_commit_id
+from fs.repositories r
+  join fs.branches b on b.id = r.default_branch_id
+where r.id = new.repository_id;
+if resolved_parent_commit_id is not null then new.parent_commit_id := resolved_parent_commit_id;
+else -- if commits already exist, we should have been able to resolve a parent.
+if exists (
+  select 1
+  from fs.commits
+  where repository_id = new.repository_id
+) then raise exception 'Parent_commit_id must be specified (repository default branch head could not be resolved)';
+end if;
+end if;
+end if;
 -- Enforce that parent_commit_id (if provided) belongs to the same repository.
 -- (Redundant with commits_parent_same_repo_fk, but yields a nicer error.)
-IF NEW.parent_commit_id IS NOT NULL
-AND NOT EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE id = NEW.parent_commit_id
-    AND repository_id = NEW.repository_id
-) THEN RAISE EXCEPTION 'Invalid parent_commit_id: must reference a commit in the same repository';
-END IF;
-RETURN NEW;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+if new.parent_commit_id is not null
+and not exists (
+  select 1
+  from fs.commits
+  where id = new.parent_commit_id
+    and repository_id = new.repository_id
+) then raise exception 'Invalid parent_commit_id: must reference a commit in the same repository';
+end if;
+return new;
+end;
+$$ language plpgsql volatile parallel unsafe;
+
 -- ========================================
 -- TRIGGERS
 -- ========================================
 /*
- fs._files_before_insert_trigger() -> trigger
- -------------------------------------------
- BEFORE INSERT trigger on `fs.files`.
- 
- Responsibilities:
- - Normalize `NEW.path` to the canonical absolute form (via `fs._normalize_path`).
- - Default flags (`is_deleted`, `is_symlink`) to FALSE when NULL is supplied.
- - Enforce file-state invariants:
- - If `is_deleted = TRUE`: force `is_symlink = FALSE` and coalesce content to ''.
- - If `is_deleted = FALSE`: require non-NULL content.
- - If `is_symlink = TRUE`: normalize `content` as an absolute path (the target).
- */
-CREATE OR REPLACE FUNCTION fs._files_before_insert_trigger() RETURNS TRIGGER AS $$ BEGIN -- Enforce canonical paths even if someone inserts directly into fs.files
-  NEW.path := fs._normalize_path(NEW.path);
-NEW.is_deleted := COALESCE(NEW.is_deleted, FALSE);
-NEW.is_symlink := COALESCE(NEW.is_symlink, FALSE);
-IF NEW.is_deleted THEN NEW.is_symlink := FALSE;
-NEW.content := COALESCE(NEW.content, '');
-ELSE IF NEW.content IS NULL THEN RAISE EXCEPTION 'content must be specified when inserting a non-deleted file';
-END IF;
-IF NEW.is_symlink THEN NEW.content := fs._normalize_path(NEW.content);
-END IF;
-END IF;
-RETURN NEW;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+fs._files_before_insert_trigger() -> trigger
+-------------------------------------------
+before insert trigger on `fs.files`.
+
+responsibilities:
+- normalize `new.path` to the canonical absolute form (via `fs._normalize_path`).
+- default flags (`is_deleted`, `is_symlink`) to false when null is supplied.
+- enforce file-state invariants:
+- if `is_deleted = true`: force `is_symlink = false` and coalesce content to ''.
+- if `is_deleted = false`: require non-null content.
+- if `is_symlink = true`: normalize `content` as an absolute path (the target).
+*/
+create or replace function fs._files_before_insert_trigger () returns trigger as $$ begin -- enforce canonical paths even if someone inserts directly into fs.files
+  new.path := fs._normalize_path(new.path);
+new.is_deleted := coalesce(new.is_deleted, false);
+new.is_symlink := coalesce(new.is_symlink, false);
+if new.is_deleted then new.is_symlink := false;
+new.content := coalesce(new.content, '');
+else if new.content is null then raise exception 'Content must be specified when inserting a non-deleted file';
+end if;
+if new.is_symlink then new.content := fs._normalize_path(new.content);
+end if;
+end if;
+return new;
+end;
+$$ language plpgsql volatile parallel unsafe;
+
 /*
- fs._repositories_after_insert() -> trigger
- -----------------------------------------
- AFTER INSERT trigger on `fs.repositories`.
- 
- Creates the default `main` branch for the new repository and records it in
- `fs.repositories.default_branch_id`.
- 
- The created branch starts with `head_commit_id = NULL` so that the first/root
- commit can be created with `parent_commit_id = NULL`.
- */
-CREATE OR REPLACE FUNCTION fs._repositories_after_insert() RETURNS TRIGGER AS $$
-DECLARE branch_id UUID;
-BEGIN -- Create the default branch with no head yet. The first commit can be created with parent_commit_id = NULL.
-INSERT INTO fs.branches (repository_id, name, head_commit_id)
-VALUES (NEW.id, 'main', NULL)
-RETURNING id INTO branch_id;
+fs._repositories_after_insert() -> trigger
+-----------------------------------------
+after insert trigger on `fs.repositories`.
+
+creates the default `main` branch for the new repository and records it in
+`fs.repositories.default_branch_id`.
+
+the created branch starts with `head_commit_id = null` so that the first/root
+commit can be created with `parent_commit_id = null`.
+*/
+create or replace function fs._repositories_after_insert () returns trigger as $$
+declare branch_id uuid;
+begin -- create the default branch with no head yet. the first commit can be created with parent_commit_id = null.
+insert into fs.branches (repository_id, name, head_commit_id)
+values (new.id, 'main', null)
+returning id into branch_id;
 -- Set the default branch on the repository
-UPDATE fs.repositories
-SET default_branch_id = branch_id
-WHERE id = NEW.id;
-RETURN NEW;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+update fs.repositories
+set default_branch_id = branch_id
+where id = new.id;
+return new;
+end;
+$$ language plpgsql volatile parallel unsafe;
+
 /*
- fs._branches_before_insert() -> trigger
- --------------------------------------
- BEFORE INSERT trigger on `fs.branches`.
- 
- If `NEW.head_commit_id` is omitted/NULL:
- - Default it to the repository default branch head (when resolvable).
- - If the repository already has commits but the default branch head cannot be
- resolved (e.g. the default branch still has a NULL head), require an explicit
- `head_commit_id`.
- - Otherwise allow NULL (empty branch in a repository that has no commits yet).
- */
-CREATE OR REPLACE FUNCTION fs._branches_before_insert() RETURNS TRIGGER AS $$
-DECLARE resolved_head_commit_id UUID;
-BEGIN IF NEW.head_commit_id IS NULL THEN
-SELECT b.head_commit_id INTO resolved_head_commit_id
-FROM fs.repositories r
-  JOIN fs.branches b ON b.id = r.default_branch_id
-WHERE r.id = NEW.repository_id;
-IF resolved_head_commit_id IS NULL THEN -- If the repository already has commits, we should be able to default to something. Require explicit head_commit_id.
-IF EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE repository_id = NEW.repository_id
-) THEN RAISE EXCEPTION 'head_commit_id must be specified when creating a branch';
-END IF;
+fs._branches_before_insert() -> trigger
+--------------------------------------
+before insert trigger on `fs.branches`.
+
+if `new.head_commit_id` is omitted/null:
+- default it to the repository default branch head (when resolvable).
+- if the repository already has commits but the default branch head cannot be
+resolved (e.g. the default branch still has a null head), require an explicit
+`head_commit_id`.
+- otherwise allow null (empty branch in a repository that has no commits yet).
+*/
+create or replace function fs._branches_before_insert () returns trigger as $$
+declare resolved_head_commit_id uuid;
+begin if new.head_commit_id is null then
+select b.head_commit_id into resolved_head_commit_id
+from fs.repositories r
+  join fs.branches b on b.id = r.default_branch_id
+where r.id = new.repository_id;
+if resolved_head_commit_id is null then -- if the repository already has commits, we should be able to default to something. require explicit head_commit_id.
+if exists (
+  select 1
+  from fs.commits
+  where repository_id = new.repository_id
+) then raise exception 'Head_commit_id must be specified when creating a branch';
+end if;
 -- Otherwise allow NULL head_commit_id (empty branch before first commit).
-RETURN NEW;
-END IF;
-NEW.head_commit_id := resolved_head_commit_id;
-END IF;
-RETURN NEW;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+return new;
+end if;
+new.head_commit_id := resolved_head_commit_id;
+end if;
+return new;
+end;
+$$ language plpgsql volatile parallel unsafe;
+
 /*
- Trigger wiring
- --------------
- We use triggers to enforce canonical storage and provide convenience defaults,
- while keeping the direct-write table API intact.
- */
+trigger wiring
+--------------
+we use triggers to enforce canonical storage and provide convenience defaults,
+while keeping the direct-write table api intact.
+*/
 -- Create trigger on fs.commits table
-CREATE TRIGGER commits_before_insert_trigger BEFORE
-INSERT ON fs.commits FOR EACH ROW EXECUTE FUNCTION fs._commits_before_insert_trigger();
+create trigger commits_before_insert_trigger before insert on fs.commits for each row
+execute function fs._commits_before_insert_trigger ();
+
 -- Create trigger on fs.files table
-CREATE TRIGGER files_before_insert_trigger BEFORE
-INSERT ON fs.files FOR EACH ROW EXECUTE FUNCTION fs._files_before_insert_trigger();
+create trigger files_before_insert_trigger before insert on fs.files for each row
+execute function fs._files_before_insert_trigger ();
+
 -- Create trigger on fs.repositories table
-CREATE TRIGGER repositories_after_insert_trigger
-AFTER
-INSERT ON fs.repositories FOR EACH ROW EXECUTE FUNCTION fs._repositories_after_insert();
+create trigger repositories_after_insert_trigger
+after insert on fs.repositories for each row
+execute function fs._repositories_after_insert ();
+
 -- Create trigger on branches table
-CREATE TRIGGER branches_before_insert_trigger BEFORE
-INSERT ON fs.branches FOR EACH ROW EXECUTE FUNCTION fs._branches_before_insert();
+create trigger branches_before_insert_trigger before insert on fs.branches for each row
+execute function fs._branches_before_insert ();
+
 -- ========================================
 -- INDEXES
 -- ========================================
 /*
- Indexes
- -------
- These indexes support common traversals and invariants:
- - (repository_id, parent_commit_id): accelerates ancestor walking and merge-base
- queries.
- - (repository_id, merged_from_commit_id): accelerates merge-base lookups across
- linear merge commits.
- - "one root per repo": guarantees only one commit per repository can have a NULL
- parent.
- */
-CREATE INDEX idx_commits_repository_parent ON fs.commits(repository_id, parent_commit_id);
-CREATE INDEX idx_commits_repository_merged_from ON fs.commits(repository_id, merged_from_commit_id);
+indexes
+-------
+these indexes support common traversals and invariants:
+- (repository_id, parent_commit_id): accelerates ancestor walking and merge-base
+queries.
+- (repository_id, merged_from_commit_id): accelerates merge-base lookups across
+linear merge commits.
+- "one root per repo": guarantees only one commit per repository can have a null
+parent.
+*/
+create index idx_commits_repository_parent on fs.commits (repository_id, parent_commit_id);
+
+create index idx_commits_repository_merged_from on fs.commits (repository_id, merged_from_commit_id);
+
 -- Only the first/root commit in a repository may have a NULL parent
-CREATE UNIQUE INDEX commits_one_root_per_repo_idx ON fs.commits(repository_id)
-WHERE parent_commit_id IS NULL;
+create unique index commits_one_root_per_repo_idx on fs.commits (repository_id)
+where
+  parent_commit_id is null;
+
 -- ========================================
 -- READ HELPERS
 -- ========================================
 /*
- fs.get_commit_delta(p_commit_id uuid) -> TABLE(...)
- --------------------------------------------------
- Returns the **commit delta**: all file rows written *in that commit only*,
- joined with repository and commit metadata.
- 
- This does **not** resolve ancestors. It is primarily useful for:
- - auditing what a commit changed (including deletions and symlinks),
- - computing diffs at the commit layer.
- 
- Notes:
- - If a commit wrote no files, this returns 0 rows.
- - File content is intentionally omitted from the returned table shape; use
- `fs.read_file(commit_id, path)` when you need content.
- */
-CREATE OR REPLACE FUNCTION fs.get_commit_delta(p_commit_id UUID) RETURNS TABLE(
-    repository_id UUID,
-    repository_name TEXT,
-    commit_id UUID,
-    path TEXT,
-    is_deleted BOOLEAN,
-    is_symlink BOOLEAN,
-    file_created_at TIMESTAMPTZ,
-    commit_created_at TIMESTAMPTZ,
-    commit_message TEXT
-  ) AS $$ BEGIN RETURN QUERY
-SELECT r.id as repository_id,
+fs.get_commit_delta(p_commit_id uuid) -> table(...)
+--------------------------------------------------
+returns the **commit delta**: all file rows written *in that commit only*,
+joined with repository and commit metadata.
+
+this does **not** resolve ancestors. it is primarily useful for:
+- auditing what a commit changed (including deletions and symlinks),
+- computing diffs at the commit layer.
+
+notes:
+- if a commit wrote no files, this returns 0 rows.
+- file content is intentionally omitted from the returned table shape; use
+`fs.read_file(commit_id, path)` when you need content.
+*/
+create or replace function fs.get_commit_delta (p_commit_id uuid) returns table (
+  repository_id uuid,
+  repository_name text,
+  commit_id uuid,
+  path text,
+  is_deleted boolean,
+  is_symlink boolean,
+  file_created_at timestamptz,
+  commit_created_at timestamptz,
+  commit_message text
+) as $$ begin return query
+select r.id as repository_id,
   r.name as repository_name,
   c.id as commit_id,
   f.path,
@@ -1125,885 +1146,886 @@ SELECT r.id as repository_id,
   f.created_at as file_created_at,
   c.created_at as commit_created_at,
   c.message as commit_message
-FROM fs.commits c
-  JOIN fs.repositories r ON c.repository_id = r.id
-  JOIN fs.files f ON c.id = f.commit_id
-WHERE c.id = p_commit_id;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+from fs.commits c
+  join fs.repositories r on c.repository_id = r.id
+  join fs.files f on c.id = f.commit_id
+where c.id = p_commit_id;
+end;
+$$ language plpgsql stable parallel safe;
+
 /*
- fs.get_commit_snapshot(p_commit_id uuid, p_path_prefix text default NULL) -> TABLE(...)
- -------------------------------------------------------------------------------------
- Public snapshot helper that returns the resolved file tree at a commit **without**
- file content.
- 
- Rationale:
- - Snapshots are often used for browsing/listing; omitting content keeps result
- sets smaller and avoids accidentally fetching large blobs.
- - Use `fs.read_file(commit_id, path)` to fetch content for specific paths.
- 
- Implementation detail:
- - This function intentionally avoids materializing file `content` so that callers
- can browse large repositories cheaply.
- */
-CREATE OR REPLACE FUNCTION fs.get_commit_snapshot(
-    p_commit_id UUID,
-    p_path_prefix TEXT DEFAULT NULL
-  ) RETURNS TABLE(
-    repository_id UUID,
-    repository_name TEXT,
-    commit_id UUID,
-    path TEXT,
-    is_symlink BOOLEAN,
-    commit_created_at TIMESTAMPTZ,
-    commit_message TEXT
-  ) AS $$
-DECLARE normalized_prefix TEXT := NULL;
-BEGIN IF p_commit_id IS NULL THEN RAISE EXCEPTION 'commit_id must be specified';
-END IF;
-IF NOT EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE id = p_commit_id
-) THEN RAISE EXCEPTION 'Invalid commit_id: commit does not exist';
-END IF;
-IF p_path_prefix IS NOT NULL THEN normalized_prefix := fs._normalize_path_prefix(p_path_prefix);
-END IF;
-RETURN QUERY WITH RECURSIVE commit_tree AS (
+fs.get_commit_snapshot(p_commit_id uuid, p_path_prefix text default null) -> table(...)
+-------------------------------------------------------------------------------------
+public snapshot helper that returns the resolved file tree at a commit **without**
+file content.
+
+rationale:
+- snapshots are often used for browsing/listing; omitting content keeps result
+sets smaller and avoids accidentally fetching large blobs.
+- use `fs.read_file(commit_id, path)` to fetch content for specific paths.
+
+implementation detail:
+- this function intentionally avoids materializing file `content` so that callers
+can browse large repositories cheaply.
+*/
+create or replace function fs.get_commit_snapshot (p_commit_id uuid, p_path_prefix text default null) returns table (
+  repository_id uuid,
+  repository_name text,
+  commit_id uuid,
+  path text,
+  is_symlink boolean,
+  commit_created_at timestamptz,
+  commit_message text
+) as $$
+declare normalized_prefix text := null;
+begin if p_commit_id is null then raise exception 'Commit_id must be specified';
+end if;
+if not exists (
+  select 1
+  from fs.commits
+  where id = p_commit_id
+) then raise exception 'Invalid commit_id: commit does not exist';
+end if;
+if p_path_prefix is not null then normalized_prefix := fs._normalize_path_prefix(p_path_prefix);
+end if;
+return query with recursive commit_tree as (
   -- Start with the given commit
-  SELECT id,
+  select id,
     parent_commit_id,
     0 as depth
-  FROM fs.commits
-  WHERE id = p_commit_id
-  UNION ALL
+  from fs.commits
+  where id = p_commit_id
+  union all
   -- Recursively add parent commits
-  SELECT c.id,
+  select c.id,
     c.parent_commit_id,
     ct.depth + 1
-  FROM fs.commits c
-    INNER JOIN commit_tree ct ON c.id = ct.parent_commit_id
+  from fs.commits c
+    inner join commit_tree ct on c.id = ct.parent_commit_id
 ),
-all_files AS (
+all_files as (
   -- Get all files from commits in the tree, preferring newer versions.
   -- Note: we do NOT select `content` here. This prevents materializing large
   -- blobs when callers only need to browse paths/metadata.
-  SELECT f.path,
+  select f.path,
     f.is_deleted,
     f.is_symlink,
-    ROW_NUMBER() OVER (
-      PARTITION BY f.path
-      ORDER BY ct.depth ASC
+    row_number() over (
+      partition by f.path
+      order by ct.depth asc
     ) as rn
-  FROM commit_tree ct
-    JOIN fs.files f ON ct.id = f.commit_id
-  WHERE (
-      normalized_prefix IS NULL
-      OR starts_with(f.path, normalized_prefix)
+  from commit_tree ct
+    join fs.files f on ct.id = f.commit_id
+  where (
+      normalized_prefix is null
+      or starts_with(f.path, normalized_prefix)
     )
 ),
-snapshot_files AS (
-  SELECT af.path,
+snapshot_files as (
+  select af.path,
     af.is_symlink
-  FROM all_files af
-  WHERE af.rn = 1
-    AND NOT af.is_deleted
+  from all_files af
+  where af.rn = 1
+    and not af.is_deleted
 )
-SELECT r.id as repository_id,
+select r.id as repository_id,
   r.name as repository_name,
   c.id as commit_id,
   sf.path,
   sf.is_symlink,
   c.created_at as commit_created_at,
   c.message as commit_message
-FROM fs.commits c
-  JOIN fs.repositories r ON c.repository_id = r.id
-  JOIN snapshot_files sf ON TRUE
-WHERE c.id = p_commit_id
-ORDER BY sf.path;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+from fs.commits c
+  join fs.repositories r on c.repository_id = r.id
+  join snapshot_files sf on true
+where c.id = p_commit_id
+order by sf.path;
+end;
+$$ language plpgsql stable parallel safe;
+
 /*
- fs._get_commit_snapshot_with_content(p_commit_id uuid, p_path_prefix text default NULL)
- -> TABLE(repository_id uuid, repository_name text, commit_id uuid,
- path text, content text, is_symlink boolean,
- commit_created_at timestamptz, commit_message text)
- -------------------------------------------------------------------------------------
- Internal helper that returns the resolved file snapshot at a commit, including
- file `content`.
- 
- Implementation detail:
- - We first compute the resolved snapshot *without* content via `fs.get_commit_snapshot`.
- - We then populate `content` via `fs.read_file(commit_id, path)` per returned path.
- 
- This avoids materializing all historical file contents during snapshot resolution
- (which can be very large). The trade-off is that it may perform more work per
- path because `fs.read_file` resolves by walking ancestry.
- 
- Notes:
- - Symlinks are not dereferenced; `content` for a symlink is the stored target.
- - This function is used by conflict detection, merges, and rebases where content
- comparisons are required.
- */
-CREATE OR REPLACE FUNCTION fs._get_commit_snapshot_with_content(
-    p_commit_id UUID,
-    p_path_prefix TEXT DEFAULT NULL
-  ) RETURNS TABLE(
-    repository_id UUID,
-    repository_name TEXT,
-    commit_id UUID,
-    path TEXT,
-    content TEXT,
-    is_symlink BOOLEAN,
-    commit_created_at TIMESTAMPTZ,
-    commit_message TEXT
-  ) AS $$ BEGIN RETURN QUERY
-SELECT s.repository_id,
+fs._get_commit_snapshot_with_content(p_commit_id uuid, p_path_prefix text default null)
+-> table(repository_id uuid, repository_name text, commit_id uuid,
+path text, content text, is_symlink boolean,
+commit_created_at timestamptz, commit_message text)
+-------------------------------------------------------------------------------------
+internal helper that returns the resolved file snapshot at a commit, including
+file `content`.
+
+implementation detail:
+- we first compute the resolved snapshot *without* content via `fs.get_commit_snapshot`.
+- we then populate `content` via `fs.read_file(commit_id, path)` per returned path.
+
+this avoids materializing all historical file contents during snapshot resolution
+(which can be very large). the trade-off is that it may perform more work per
+path because `fs.read_file` resolves by walking ancestry.
+
+notes:
+- symlinks are not dereferenced; `content` for a symlink is the stored target.
+- this function is used by conflict detection, merges, and rebases where content
+comparisons are required.
+*/
+create or replace function fs._get_commit_snapshot_with_content (p_commit_id uuid, p_path_prefix text default null) returns table (
+  repository_id uuid,
+  repository_name text,
+  commit_id uuid,
+  path text,
+  content text,
+  is_symlink boolean,
+  commit_created_at timestamptz,
+  commit_message text
+) as $$ begin return query
+select s.repository_id,
   s.repository_name,
   s.commit_id,
   s.path,
-  fs.read_file(s.commit_id, s.path) AS content,
+  fs.read_file(s.commit_id, s.path) as content,
   s.is_symlink,
   s.commit_created_at,
   s.commit_message
-FROM fs.get_commit_snapshot(p_commit_id, p_path_prefix) s
-ORDER BY s.path;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+from fs.get_commit_snapshot(p_commit_id, p_path_prefix) s
+order by s.path;
+end;
+$$ language plpgsql stable parallel safe;
+
 -- ========================================
 -- ESSENTIAL FUNCTIONS
 -- ========================================
 /*
- fs.read_file(p_commit_id uuid, p_file_path text) -> text | NULL
- --------------------------------------------------------------
- Reads a file as of a given commit by resolving through the commit's ancestry.
- 
- Resolution rules:
- - Normalize `p_file_path` using `fs._normalize_path`.
- - Starting at `p_commit_id`, walk `parent_commit_id` pointers upward until a row
- is found for the normalized path.
- - If the first row found is a tombstone (`is_deleted = TRUE`), return `NULL`.
- - Otherwise return the stored `content`.
- 
- Notes:
- - Symlinks are not dereferenced. For `is_symlink = TRUE`, `content` is the
- normalized absolute symlink target path and is returned as-is.
- - This function includes a large traversal step limit as a safety guard in case
- of an unexpected commit-parent cycle.
- */
-CREATE OR REPLACE FUNCTION fs.read_file(p_commit_id UUID, p_file_path TEXT) RETURNS TEXT AS $$
-DECLARE normalized_path TEXT;
-DECLARE result_content TEXT := NULL;
-DECLARE result_is_deleted BOOLEAN := FALSE;
-DECLARE current_commit UUID := p_commit_id;
-DECLARE step_count INT := 0;
-BEGIN -- Walk up the commit tree to find the file
-IF p_commit_id IS NULL THEN RAISE EXCEPTION 'commit_id must be specified';
-END IF;
-IF NOT EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE id = p_commit_id
-) THEN RAISE EXCEPTION 'Invalid commit_id: commit does not exist';
-END IF;
+fs.read_file(p_commit_id uuid, p_file_path text) -> text | null
+--------------------------------------------------------------
+reads a file as of a given commit by resolving through the commit's ancestry.
+
+resolution rules:
+- normalize `p_file_path` using `fs._normalize_path`.
+- starting at `p_commit_id`, walk `parent_commit_id` pointers upward until a row
+is found for the normalized path.
+- if the first row found is a tombstone (`is_deleted = true`), return `null`.
+- otherwise return the stored `content`.
+
+notes:
+- symlinks are not dereferenced. for `is_symlink = true`, `content` is the
+normalized absolute symlink target path and is returned as-is.
+- this function includes a large traversal step limit as a safety guard in case
+of an unexpected commit-parent cycle.
+*/
+create or replace function fs.read_file (p_commit_id uuid, p_file_path text) returns text as $$
+declare normalized_path text;
+declare result_content text := null;
+declare result_is_deleted boolean := false;
+declare current_commit uuid := p_commit_id;
+declare step_count int := 0;
+begin -- walk up the commit tree to find the file
+if p_commit_id is null then raise exception 'Commit_id must be specified';
+end if;
+if not exists (
+  select 1
+  from fs.commits
+  where id = p_commit_id
+) then raise exception 'Invalid commit_id: commit does not exist';
+end if;
 normalized_path := fs._normalize_path(p_file_path);
-WHILE current_commit IS NOT NULL LOOP step_count := step_count + 1;
-IF step_count > 100000 THEN RAISE EXCEPTION 'Commit history traversal exceeded % steps (cycle?)',
+while current_commit is not null loop step_count := step_count + 1;
+if step_count > 100000 then raise exception 'Commit history traversal exceeded % steps (cycle?)',
 step_count;
-END IF;
-SELECT content,
-  is_deleted INTO result_content,
+end if;
+select content,
+  is_deleted into result_content,
   result_is_deleted
-FROM fs.files
-WHERE commit_id = current_commit
-  AND path = normalized_path;
+from fs.files
+where commit_id = current_commit
+  and path = normalized_path;
 -- If found, return it (tombstones delete the file)
-IF FOUND THEN IF result_is_deleted THEN RETURN NULL;
-END IF;
-RETURN result_content;
-END IF;
+if found then if result_is_deleted then return null;
+end if;
+return result_content;
+end if;
 -- Move to parent commit
-SELECT parent_commit_id INTO current_commit
-FROM fs.commits
-WHERE id = current_commit;
-END LOOP;
+select parent_commit_id into current_commit
+from fs.commits
+where id = current_commit;
+end loop;
 -- File not found in any ancestor commit
-RETURN NULL;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+return null;
+end;
+$$ language plpgsql stable parallel safe;
+
 /*
- fs.get_file_history(p_commit_id uuid, p_file_path text)
- -> TABLE(commit_id uuid, content text | NULL, is_deleted boolean, is_symlink boolean)
- --------------------------------------------------------------------------------------
- Returns the history of a single path by walking from `p_commit_id` up through parents
- and returning the commits that have an explicit row for that path.
- 
- Meaning:
- - Each returned row corresponds to a commit that *touched* the path (write, delete,
- or symlink change).
- - If the row is a tombstone, `content` is returned as NULL.
- 
- Ordering:
- - The function does not guarantee output ordering. Callers should add an `ORDER BY`
- clause (e.g. join `fs.commits` to order by commit time) based on their needs.
- */
-CREATE OR REPLACE FUNCTION fs.get_file_history(p_commit_id UUID, p_file_path TEXT) RETURNS TABLE(
-    commit_id UUID,
-    content TEXT,
-    is_deleted BOOLEAN,
-    is_symlink BOOLEAN
-  ) AS $$
-DECLARE normalized_path TEXT;
-BEGIN IF p_commit_id IS NULL THEN RAISE EXCEPTION 'commit_id must be specified';
-END IF;
-IF NOT EXISTS (
-  SELECT 1
-  FROM fs.commits
-  WHERE id = p_commit_id
-) THEN RAISE EXCEPTION 'Invalid commit_id: commit does not exist';
-END IF;
+fs.get_file_history(p_commit_id uuid, p_file_path text)
+-> table(commit_id uuid, content text | null, is_deleted boolean, is_symlink boolean)
+--------------------------------------------------------------------------------------
+returns the history of a single path by walking from `p_commit_id` up through parents
+and returning the commits that have an explicit row for that path.
+
+meaning:
+- each returned row corresponds to a commit that *touched* the path (write, delete,
+or symlink change).
+- if the row is a tombstone, `content` is returned as null.
+
+ordering:
+- the function does not guarantee output ordering. callers should add an `order by`
+clause (e.g. join `fs.commits` to order by commit time) based on their needs.
+*/
+create or replace function fs.get_file_history (p_commit_id uuid, p_file_path text) returns table (
+  commit_id uuid,
+  content text,
+  is_deleted boolean,
+  is_symlink boolean
+) as $$
+declare normalized_path text;
+begin if p_commit_id is null then raise exception 'Commit_id must be specified';
+end if;
+if not exists (
+  select 1
+  from fs.commits
+  where id = p_commit_id
+) then raise exception 'Invalid commit_id: commit does not exist';
+end if;
 normalized_path := fs._normalize_path(p_file_path);
-RETURN QUERY WITH RECURSIVE commit_tree AS (
+return query with recursive commit_tree as (
   -- Start with the given commit
-  SELECT id,
+  select id,
     parent_commit_id,
     created_at
-  FROM fs.commits
-  WHERE id = p_commit_id
-  UNION ALL
+  from fs.commits
+  where id = p_commit_id
+  union all
   -- Recursively add parent commits
-  SELECT c.id,
+  select c.id,
     c.parent_commit_id,
     c.created_at
-  FROM fs.commits c
-    INNER JOIN commit_tree ct ON c.id = ct.parent_commit_id
+  from fs.commits c
+    inner join commit_tree ct on c.id = ct.parent_commit_id
 )
-SELECT ct.id,
-  CASE
-    WHEN f.is_deleted THEN NULL
-    ELSE f.content
-  END as content,
+select ct.id,
+  case
+    when f.is_deleted then null
+    else f.content
+  end as content,
   f.is_deleted,
   f.is_symlink
-FROM commit_tree ct
-  LEFT JOIN fs.files f ON ct.id = f.commit_id
-  AND f.path = normalized_path
-WHERE f.id IS NOT NULL;
+from commit_tree ct
+  left join fs.files f on ct.id = f.commit_id
+  and f.path = normalized_path
+where f.id is not null;
 -- Only include commits that have this file
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+end;
+$$ language plpgsql stable parallel safe;
+
 -- ========================================
 -- MERGE / REBASE HELPERS (CONFLICT DETECTION)
 -- ========================================
 /*
- fs.get_merge_base(p_left_commit_id uuid, p_right_commit_id uuid) -> uuid
- -----------------------------------------------------------------------
- Computes the **merge base** (lowest common ancestor) between two commits in the
- same repository.
- 
- Implementation notes:
- - We build two ancestor sets (including each input commit) with depths measured
- as "number of parent steps".
- - We pick the common ancestor with minimal `left_depth + right_depth`.
- 
- Errors:
- - Raises if either commit id is NULL, does not exist, or belongs to a different
- repository than the other.
- */
-CREATE OR REPLACE FUNCTION fs.get_merge_base(p_left_commit_id UUID, p_right_commit_id UUID) RETURNS UUID AS $$
-DECLARE v_left_repo_id UUID;
-v_right_repo_id UUID;
-v_base_commit_id UUID;
-BEGIN IF p_left_commit_id IS NULL
-OR p_right_commit_id IS NULL THEN RAISE EXCEPTION 'commit_id must be specified';
-END IF;
-SELECT repository_id INTO v_left_repo_id
-FROM fs.commits
-WHERE id = p_left_commit_id;
-IF v_left_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid commit_id (left): commit does not exist';
-END IF;
-SELECT repository_id INTO v_right_repo_id
-FROM fs.commits
-WHERE id = p_right_commit_id;
-IF v_right_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid commit_id (right): commit does not exist';
-END IF;
-IF v_left_repo_id <> v_right_repo_id THEN RAISE EXCEPTION 'Commits must belong to the same repository';
-END IF;
-WITH RECURSIVE left_ancestors AS (
-  SELECT id,
+fs.get_merge_base(p_left_commit_id uuid, p_right_commit_id uuid) -> uuid
+-----------------------------------------------------------------------
+computes the **merge base** (lowest common ancestor) between two commits in the
+same repository.
+
+implementation notes:
+- we build two ancestor sets (including each input commit) with depths measured
+as "number of parent steps".
+- we pick the common ancestor with minimal `left_depth + right_depth`.
+
+errors:
+- raises if either commit id is null, does not exist, or belongs to a different
+repository than the other.
+*/
+create or replace function fs.get_merge_base (p_left_commit_id uuid, p_right_commit_id uuid) returns uuid as $$
+declare v_left_repo_id uuid;
+v_right_repo_id uuid;
+v_base_commit_id uuid;
+begin if p_left_commit_id is null
+or p_right_commit_id is null then raise exception 'Commit_id must be specified';
+end if;
+select repository_id into v_left_repo_id
+from fs.commits
+where id = p_left_commit_id;
+if v_left_repo_id is null then raise exception 'Invalid commit_id (left): commit does not exist';
+end if;
+select repository_id into v_right_repo_id
+from fs.commits
+where id = p_right_commit_id;
+if v_right_repo_id is null then raise exception 'Invalid commit_id (right): commit does not exist';
+end if;
+if v_left_repo_id <> v_right_repo_id then raise exception 'Commits must belong to the same repository';
+end if;
+with recursive left_ancestors as (
+  select id,
     parent_commit_id,
     merged_from_commit_id,
-    0 AS depth
-  FROM fs.commits
-  WHERE id = p_left_commit_id
-  UNION ALL
-  SELECT c.id,
+    0 as depth
+  from fs.commits
+  where id = p_left_commit_id
+  union all
+  select c.id,
     c.parent_commit_id,
     c.merged_from_commit_id,
     la.depth + 1
-  FROM fs.commits c
-    JOIN left_ancestors la ON c.id = la.parent_commit_id
-    OR c.id = la.merged_from_commit_id
+  from fs.commits c
+    join left_ancestors la on c.id = la.parent_commit_id
+    or c.id = la.merged_from_commit_id
 ),
-right_ancestors AS (
-  SELECT id,
+right_ancestors as (
+  select id,
     parent_commit_id,
     merged_from_commit_id,
-    0 AS depth
-  FROM fs.commits
-  WHERE id = p_right_commit_id
-  UNION ALL
-  SELECT c.id,
+    0 as depth
+  from fs.commits
+  where id = p_right_commit_id
+  union all
+  select c.id,
     c.parent_commit_id,
     c.merged_from_commit_id,
     ra.depth + 1
-  FROM fs.commits c
-    JOIN right_ancestors ra ON c.id = ra.parent_commit_id
-    OR c.id = ra.merged_from_commit_id
+  from fs.commits c
+    join right_ancestors ra on c.id = ra.parent_commit_id
+    or c.id = ra.merged_from_commit_id
 ),
-common AS (
-  SELECT l.id,
-    MIN(l.depth + r.depth) AS total_depth
-  FROM left_ancestors l
-    JOIN right_ancestors r USING (id)
-  GROUP BY l.id
+common as (
+  select l.id,
+    min(l.depth + r.depth) as total_depth
+  from left_ancestors l
+    join right_ancestors r using (id)
+  group by l.id
 )
-SELECT id INTO v_base_commit_id
-FROM common
-ORDER BY total_depth ASC
-LIMIT 1;
-IF v_base_commit_id IS NULL THEN RAISE EXCEPTION 'No common ancestor found (unexpected)';
-END IF;
-RETURN v_base_commit_id;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+select id into v_base_commit_id
+from common
+order by total_depth asc
+limit 1;
+if v_base_commit_id is null then raise exception 'No common ancestor found (unexpected)';
+end if;
+return v_base_commit_id;
+end;
+$$ language plpgsql stable parallel safe;
+
 /*
- fs.get_conflicts(p_left_commit_id uuid, p_right_commit_id uuid) -> TABLE(...)
- ----------------------------------------------------------------------------
- Performs conservative file-level 3-way conflict detection between two commits.
- 
- Definitions:
- - For any path, the "state" at a commit is:
- - exists (boolean)
- - is_symlink (boolean)
- - content (text; for symlinks this is the stored target path)
- - Missing/deleted is treated as `exists = FALSE` (and content/is_symlink NULL).
- 
- A path is considered in **conflict** when:
- 1) The path changed on both sides since the merge base, and
- 2) The final resolved states for left and right differ.
- 
- Return:
- - One row per conflicting path with base/left/right state details and a
- coarse `conflict_kind` classification:
- - 'delete/modify', 'add/add', or 'modify/modify'.
- 
- Usage:
- - Convention: 0 rows means "safe to proceed" for `fs.finalize_commit` and
- `fs.rebase_branch` (from a file-level perspective).
- */
-CREATE OR REPLACE FUNCTION fs.get_conflicts(p_left_commit_id UUID, p_right_commit_id UUID) RETURNS TABLE(
-    merge_base_commit_id UUID,
-    path TEXT,
-    base_exists BOOLEAN,
-    base_is_symlink BOOLEAN,
-    base_content TEXT,
-    left_exists BOOLEAN,
-    left_is_symlink BOOLEAN,
-    left_content TEXT,
-    right_exists BOOLEAN,
-    right_is_symlink BOOLEAN,
-    right_content TEXT,
-    conflict_kind TEXT
-  ) AS $$
-DECLARE v_base_commit_id UUID;
-BEGIN v_base_commit_id := fs.get_merge_base(p_left_commit_id, p_right_commit_id);
-RETURN QUERY WITH base_snapshot AS (
-  SELECT s.path,
+fs.get_conflicts(p_left_commit_id uuid, p_right_commit_id uuid) -> table(...)
+----------------------------------------------------------------------------
+performs conservative file-level 3-way conflict detection between two commits.
+
+definitions:
+- for any path, the "state" at a commit is:
+- exists (boolean)
+- is_symlink (boolean)
+- content (text; for symlinks this is the stored target path)
+- missing/deleted is treated as `exists = false` (and content/is_symlink null).
+
+a path is considered in **conflict** when:
+1) the path changed on both sides since the merge base, and
+2) the final resolved states for left and right differ.
+
+return:
+- one row per conflicting path with base/left/right state details and a
+coarse `conflict_kind` classification:
+- 'delete/modify', 'add/add', or 'modify/modify'.
+
+usage:
+- convention: 0 rows means "safe to proceed" for `fs.finalize_commit` and
+`fs.rebase_branch` (from a file-level perspective).
+*/
+create or replace function fs.get_conflicts (p_left_commit_id uuid, p_right_commit_id uuid) returns table (
+  merge_base_commit_id uuid,
+  path text,
+  base_exists boolean,
+  base_is_symlink boolean,
+  base_content text,
+  left_exists boolean,
+  left_is_symlink boolean,
+  left_content text,
+  right_exists boolean,
+  right_is_symlink boolean,
+  right_content text,
+  conflict_kind text
+) as $$
+declare v_base_commit_id uuid;
+begin v_base_commit_id := fs.get_merge_base(p_left_commit_id, p_right_commit_id);
+return query with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_base_commit_id) s
 ),
-left_snapshot AS (
-  SELECT s.path,
+left_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(p_left_commit_id) s
+  from fs._get_commit_snapshot_with_content(p_left_commit_id) s
 ),
-right_snapshot AS (
-  SELECT s.path,
+right_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(p_right_commit_id) s
+  from fs._get_commit_snapshot_with_content(p_right_commit_id) s
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT l.path AS file_path
-  FROM left_snapshot l
-  UNION
-  SELECT r.path AS file_path
-  FROM right_snapshot r
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select l.path as file_path
+  from left_snapshot l
+  union
+  select r.path as file_path
+  from right_snapshot r
 ),
-states AS (
-  SELECT v_base_commit_id AS merge_base_commit_id,
-    p.file_path AS path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (l.path IS NOT NULL) AS left_exists,
-    l.is_symlink AS left_is_symlink,
-    l.content AS left_content,
-    (r.path IS NOT NULL) AS right_exists,
-    r.is_symlink AS right_is_symlink,
-    r.content AS right_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN left_snapshot l ON l.path = p.file_path
-    LEFT JOIN right_snapshot r ON r.path = p.file_path
+states as (
+  select v_base_commit_id as merge_base_commit_id,
+    p.file_path as path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (l.path is not null) as left_exists,
+    l.is_symlink as left_is_symlink,
+    l.content as left_content,
+    (r.path is not null) as right_exists,
+    r.is_symlink as right_is_symlink,
+    r.content as right_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join left_snapshot l on l.path = p.file_path
+    left join right_snapshot r on r.path = p.file_path
 ),
-diffs AS (
-  SELECT s.*,
+diffs as (
+  select s.*,
     (
-      s.left_exists IS DISTINCT
-      FROM s.base_exists
-        OR s.left_is_symlink IS DISTINCT
-      FROM s.base_is_symlink
-        OR s.left_content IS DISTINCT
-      FROM s.base_content
-    ) AS left_changed,
+      s.left_exists is distinct
+      from s.base_exists
+        or s.left_is_symlink is distinct
+      from s.base_is_symlink
+        or s.left_content is distinct
+      from s.base_content
+    ) as left_changed,
     (
-      s.right_exists IS DISTINCT
-      FROM s.base_exists
-        OR s.right_is_symlink IS DISTINCT
-      FROM s.base_is_symlink
-        OR s.right_content IS DISTINCT
-      FROM s.base_content
-    ) AS right_changed,
+      s.right_exists is distinct
+      from s.base_exists
+        or s.right_is_symlink is distinct
+      from s.base_is_symlink
+        or s.right_content is distinct
+      from s.base_content
+    ) as right_changed,
     (
-      s.left_exists IS DISTINCT
-      FROM s.right_exists
-        OR s.left_is_symlink IS DISTINCT
-      FROM s.right_is_symlink
-        OR s.left_content IS DISTINCT
-      FROM s.right_content
-    ) AS sides_differ
-  FROM states s
+      s.left_exists is distinct
+      from s.right_exists
+        or s.left_is_symlink is distinct
+      from s.right_is_symlink
+        or s.left_content is distinct
+      from s.right_content
+    ) as sides_differ
+  from states s
 )
-SELECT d.merge_base_commit_id,
+select d.merge_base_commit_id,
   d.path,
   d.base_exists,
-  COALESCE(d.base_is_symlink, FALSE) AS base_is_symlink,
+  coalesce(d.base_is_symlink, false) as base_is_symlink,
   d.base_content,
   d.left_exists,
-  COALESCE(d.left_is_symlink, FALSE) AS left_is_symlink,
+  coalesce(d.left_is_symlink, false) as left_is_symlink,
   d.left_content,
   d.right_exists,
-  COALESCE(d.right_is_symlink, FALSE) AS right_is_symlink,
+  coalesce(d.right_is_symlink, false) as right_is_symlink,
   d.right_content,
-  CASE
-    WHEN d.base_exists
-    AND (
-      NOT d.left_exists
-      OR NOT d.right_exists
-    ) THEN 'delete/modify'
-    WHEN NOT d.base_exists
-    AND d.left_exists
-    AND d.right_exists THEN 'add/add'
-    ELSE 'modify/modify'
-  END AS conflict_kind
-FROM diffs d
-WHERE d.left_changed
-  AND d.right_changed
-  AND d.sides_differ
-ORDER BY d.path;
-END;
-$$ LANGUAGE plpgsql STABLE PARALLEL SAFE;
+  case
+    when d.base_exists
+    and (
+      not d.left_exists
+      or not d.right_exists
+    ) then 'delete/modify'
+    when not d.base_exists
+    and d.left_exists
+    and d.right_exists then 'add/add'
+    else 'modify/modify'
+  end as conflict_kind
+from diffs d
+where d.left_changed
+  and d.right_changed
+  and d.sides_differ
+order by d.path;
+end;
+$$ language plpgsql stable parallel safe;
+
 -- ========================================
 -- MERGE / REBASE OPERATIONS (LINEAR HISTORY)
 -- ========================================
 /*
- fs.finalize_commit(p_commit_id uuid, p_target_branch_id uuid DEFAULT NULL)
- -> TABLE(operation text, repository_id uuid, target_branch_id uuid,
- merge_base_commit_id uuid, previous_target_head_commit_id uuid,
- source_commit_id uuid, merge_commit_id uuid,
- new_target_head_commit_id uuid, applied_file_count int)
- --------------------------------------------------------------------
- Finalizes a merge using a **pre-created** merge commit that already points to
- the target via `parent_commit_id` and to the source via `merged_from_commit_id`.
- 
- Workflow:
- - Caller inserts the merge commit row and (optionally) resolves conflicts by
- writing rows into `fs.files` for that commit.
- - This function verifies resolutions for all conflicting paths, applies the
- remaining non-conflicting changes from the source onto the merge commit, and
- optionally advances a target branch head to the merge commit.
- 
- Preconditions / notes:
- - The merge commit must have `parent_commit_id` populated.
- - `merged_from_commit_id` is optional:
- - When present: full merge flow (conflict checks, patching). All conflict
- paths must have rows in `fs.files` for the merge commit or the function
- raises.
- - When NULL: treated as a fast-forward finalize; no conflict or patch work is
- performed.
- - `p_target_branch_id` is optional:
- - When provided: validates branch, ensures branch head matches the merge
- commit's parent, and advances the branch head.
- - When NULL: branch pointers are untouched.
- */
-CREATE OR REPLACE FUNCTION fs.finalize_commit(
-    p_commit_id UUID,
-    p_target_branch_id UUID DEFAULT NULL
-  ) RETURNS TABLE(
-    operation TEXT,
-    repository_id UUID,
-    target_branch_id UUID,
-    merge_base_commit_id UUID,
-    previous_target_head_commit_id UUID,
-    source_commit_id UUID,
-    merge_commit_id UUID,
-    new_target_head_commit_id UUID,
-    applied_file_count INT
-  ) AS $$
-DECLARE v_target_repo_id UUID;
-v_branch_head_commit_id UUID;
-v_merge_repo_id UUID;
-v_parent_commit_id UUID;
-v_merged_from_commit_id UUID;
-v_merge_base_commit_id UUID;
-v_conflict_count INT := 0;
-v_missing_resolutions INT := 0;
-v_rows INT := 0;
-BEGIN IF p_commit_id IS NULL THEN RAISE EXCEPTION 'merge_commit_id must be specified';
-END IF;
-SELECT c.repository_id,
+fs.finalize_commit(p_commit_id uuid, p_target_branch_id uuid default null)
+-> table(operation text, repository_id uuid, target_branch_id uuid,
+merge_base_commit_id uuid, previous_target_head_commit_id uuid,
+source_commit_id uuid, merge_commit_id uuid,
+new_target_head_commit_id uuid, applied_file_count int)
+--------------------------------------------------------------------
+finalizes a merge using a **pre-created** merge commit that already points to
+the target via `parent_commit_id` and to the source via `merged_from_commit_id`.
+
+workflow:
+- caller inserts the merge commit row and (optionally) resolves conflicts by
+writing rows into `fs.files` for that commit.
+- this function verifies resolutions for all conflicting paths, applies the
+remaining non-conflicting changes from the source onto the merge commit, and
+optionally advances a target branch head to the merge commit.
+
+preconditions / notes:
+- the merge commit must have `parent_commit_id` populated.
+- `merged_from_commit_id` is optional:
+- when present: full merge flow (conflict checks, patching). all conflict
+paths must have rows in `fs.files` for the merge commit or the function
+raises.
+- when null: treated as a fast-forward finalize; no conflict or patch work is
+performed.
+- `p_target_branch_id` is optional:
+- when provided: validates branch, ensures branch head matches the merge
+commit's parent, and advances the branch head.
+- when null: branch pointers are untouched.
+*/
+create or replace function fs.finalize_commit (
+  p_commit_id uuid,
+  p_target_branch_id uuid default null
+) returns table (
+  operation text,
+  repository_id uuid,
+  target_branch_id uuid,
+  merge_base_commit_id uuid,
+  previous_target_head_commit_id uuid,
+  source_commit_id uuid,
+  merge_commit_id uuid,
+  new_target_head_commit_id uuid,
+  applied_file_count int
+) as $$
+declare v_target_repo_id uuid;
+v_branch_head_commit_id uuid;
+v_merge_repo_id uuid;
+v_parent_commit_id uuid;
+v_merged_from_commit_id uuid;
+v_merge_base_commit_id uuid;
+v_conflict_count int := 0;
+v_missing_resolutions int := 0;
+v_rows int := 0;
+begin if p_commit_id is null then raise exception 'Merge_commit_id must be specified';
+end if;
+select c.repository_id,
   c.parent_commit_id,
-  c.merged_from_commit_id INTO v_merge_repo_id,
+  c.merged_from_commit_id into v_merge_repo_id,
   v_parent_commit_id,
   v_merged_from_commit_id
-FROM fs.commits c
-WHERE c.id = p_commit_id;
-IF v_merge_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid merge_commit_id: commit does not exist';
-END IF;
-IF v_parent_commit_id IS NULL THEN RAISE EXCEPTION 'merge_commit_id must have parent_commit_id set';
-END IF;
+from fs.commits c
+where c.id = p_commit_id;
+if v_merge_repo_id is null then raise exception 'Invalid merge_commit_id: commit does not exist';
+end if;
+if v_parent_commit_id is null then raise exception 'Merge_commit_id must have parent_commit_id set';
+end if;
 repository_id := v_merge_repo_id;
 target_branch_id := p_target_branch_id;
 merge_commit_id := p_commit_id;
 -- Resolve branch context if provided
-IF p_target_branch_id IS NOT NULL THEN
-SELECT b.repository_id,
-  b.head_commit_id INTO v_target_repo_id,
+if p_target_branch_id is not null then
+select b.repository_id,
+  b.head_commit_id into v_target_repo_id,
   v_branch_head_commit_id
-FROM fs.branches b
-WHERE b.id = p_target_branch_id;
-IF v_target_repo_id IS NULL THEN RAISE EXCEPTION 'Invalid target_branch_id: branch does not exist';
-END IF;
-IF v_target_repo_id <> v_merge_repo_id THEN RAISE EXCEPTION 'Branch and merge commit must belong to the same repository';
-END IF;
-IF v_branch_head_commit_id IS NULL THEN RAISE EXCEPTION 'Branch head is NULL; cannot finalize merge';
-END IF;
-IF v_parent_commit_id <> v_branch_head_commit_id THEN RAISE EXCEPTION 'merge_commit_id must be based on the current branch head';
-END IF;
-ELSE -- No branch context; treat parent as the target snapshot
+from fs.branches b
+where b.id = p_target_branch_id;
+if v_target_repo_id is null then raise exception 'Invalid target_branch_id: branch does not exist';
+end if;
+if v_target_repo_id <> v_merge_repo_id then raise exception 'Branch and merge commit must belong to the same repository';
+end if;
+if v_branch_head_commit_id is null then raise exception 'Branch head is null; cannot finalize merge';
+end if;
+if v_parent_commit_id <> v_branch_head_commit_id then raise exception 'Merge_commit_id must be based on the current branch head';
+end if;
+else -- no branch context; treat parent as the target snapshot
 v_branch_head_commit_id := v_parent_commit_id;
-END IF;
+end if;
 previous_target_head_commit_id := v_branch_head_commit_id;
 source_commit_id := v_merged_from_commit_id;
 -- Fast-forward finalize when merged_from_commit_id is NULL
-IF v_merged_from_commit_id IS NULL THEN v_merge_base_commit_id := v_parent_commit_id;
+if v_merged_from_commit_id is null then v_merge_base_commit_id := v_parent_commit_id;
 merge_base_commit_id := v_merge_base_commit_id;
 applied_file_count := 0;
-IF p_target_branch_id IS NOT NULL THEN
-UPDATE fs.branches
-SET head_commit_id = p_commit_id
-WHERE id = p_target_branch_id;
+if p_target_branch_id is not null then
+update fs.branches
+set head_commit_id = p_commit_id
+where id = p_target_branch_id;
 previous_target_head_commit_id := v_branch_head_commit_id;
 new_target_head_commit_id := p_commit_id;
 operation := 'fast_forward';
-ELSE previous_target_head_commit_id := v_branch_head_commit_id;
-new_target_head_commit_id := NULL;
+else previous_target_head_commit_id := v_branch_head_commit_id;
+new_target_head_commit_id := null;
 operation := 'fast_forward';
-END IF;
-RETURN NEXT;
-RETURN;
-END IF;
+end if;
+return next;
+return;
+end if;
 v_merge_base_commit_id := fs.get_merge_base(v_branch_head_commit_id, v_merged_from_commit_id);
 merge_base_commit_id := v_merge_base_commit_id;
-SELECT COUNT(*)::INT INTO v_conflict_count
-FROM fs.get_conflicts(v_branch_head_commit_id, v_merged_from_commit_id);
-IF v_conflict_count > 0 THEN
-SELECT COUNT(*)::INT INTO v_missing_resolutions
-FROM fs.get_conflicts(v_branch_head_commit_id, v_merged_from_commit_id) c
-WHERE NOT EXISTS (
-    SELECT 1
-    FROM fs.files f
-    WHERE f.commit_id = p_commit_id
-      AND f.path = c.path
+select count(*)::int into v_conflict_count
+from fs.get_conflicts(v_branch_head_commit_id, v_merged_from_commit_id);
+if v_conflict_count > 0 then
+select count(*)::int into v_missing_resolutions
+from fs.get_conflicts(v_branch_head_commit_id, v_merged_from_commit_id) c
+where not exists (
+    select 1
+    from fs.files f
+    where f.commit_id = p_commit_id
+      and f.path = c.path
   );
-IF v_missing_resolutions > 0 THEN RAISE EXCEPTION 'Merge requires resolutions for % conflict paths; insert rows into fs.files for commit %',
+if v_missing_resolutions > 0 then raise exception 'Merge requires resolutions for % conflict paths; insert rows into fs.files for commit %',
 v_missing_resolutions,
 p_commit_id;
-END IF;
-END IF;
+end if;
+end if;
 applied_file_count := 0;
 -- Apply deletions that the user has not already written into the merge commit.
-WITH base_snapshot AS (
-  SELECT s.path,
+with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
 ),
-target_snapshot AS (
-  SELECT s.path,
+target_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
 ),
-source_snapshot AS (
-  SELECT s.path,
+source_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merged_from_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merged_from_commit_id) s
 ),
-user_writes AS (
-  SELECT f.path
-  FROM fs.files f
-  WHERE f.commit_id = p_commit_id
+user_writes as (
+  select f.path
+  from fs.files f
+  where f.commit_id = p_commit_id
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT t.path AS file_path
-  FROM target_snapshot t
-  UNION
-  SELECT s.path AS file_path
-  FROM source_snapshot s
-  UNION
-  SELECT u.path AS file_path
-  FROM user_writes u
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select t.path as file_path
+  from target_snapshot t
+  union
+  select s.path as file_path
+  from source_snapshot s
+  union
+  select u.path as file_path
+  from user_writes u
 ),
-states AS (
-  SELECT p.file_path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (t.path IS NOT NULL) AS target_exists,
-    t.is_symlink AS target_is_symlink,
-    t.content AS target_content,
-    (s.path IS NOT NULL) AS source_exists,
-    s.is_symlink AS source_is_symlink,
-    s.content AS source_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN target_snapshot t ON t.path = p.file_path
-    LEFT JOIN source_snapshot s ON s.path = p.file_path
+states as (
+  select p.file_path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (t.path is not null) as target_exists,
+    t.is_symlink as target_is_symlink,
+    t.content as target_content,
+    (s.path is not null) as source_exists,
+    s.is_symlink as source_is_symlink,
+    s.content as source_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join target_snapshot t on t.path = p.file_path
+    left join source_snapshot s on s.path = p.file_path
 ),
-diffs AS (
-  SELECT st.*,
+diffs as (
+  select st.*,
     (
-      st.source_exists IS DISTINCT
-      FROM st.base_exists
-        OR st.source_is_symlink IS DISTINCT
-      FROM st.base_is_symlink
-        OR st.source_content IS DISTINCT
-      FROM st.base_content
-    ) AS source_changed
-  FROM states st
+      st.source_exists is distinct
+      from st.base_exists
+        or st.source_is_symlink is distinct
+      from st.base_is_symlink
+        or st.source_content is distinct
+      from st.base_content
+    ) as source_changed
+  from states st
 ),
-desired AS (
-  SELECT d.file_path,
-    CASE
-      WHEN d.source_changed THEN d.source_exists
-      ELSE d.target_exists
-    END AS desired_exists,
-    CASE
-      WHEN d.source_changed THEN d.source_is_symlink
-      ELSE d.target_is_symlink
-    END AS desired_is_symlink,
-    CASE
-      WHEN d.source_changed THEN d.source_content
-      ELSE d.target_content
-    END AS desired_content,
+desired as (
+  select d.file_path,
+    case
+      when d.source_changed then d.source_exists
+      else d.target_exists
+    end as desired_exists,
+    case
+      when d.source_changed then d.source_is_symlink
+      else d.target_is_symlink
+    end as desired_is_symlink,
+    case
+      when d.source_changed then d.source_content
+      else d.target_content
+    end as desired_content,
     d.target_exists,
     d.target_is_symlink,
     d.target_content
-  FROM diffs d
+  from diffs d
 ),
-patch AS (
-  SELECT de.file_path,
+patch as (
+  select de.file_path,
     de.desired_exists,
     de.desired_is_symlink,
     de.desired_content,
     (
-      NOT de.desired_exists
-      AND de.target_exists
-    ) AS need_delete,
+      not de.desired_exists
+      and de.target_exists
+    ) as need_delete,
     (
       de.desired_exists
-      AND (
-        (NOT de.target_exists)
-        OR de.target_is_symlink IS DISTINCT
-        FROM de.desired_is_symlink
-          OR de.target_content IS DISTINCT
-        FROM de.desired_content
+      and (
+        (not de.target_exists)
+        or de.target_is_symlink is distinct
+        from de.desired_is_symlink
+          or de.target_content is distinct
+        from de.desired_content
       )
-    ) AS need_write
-  FROM desired de
+    ) as need_write
+  from desired de
 )
-INSERT INTO fs.files (commit_id, path, content, is_deleted, is_symlink)
-SELECT p_commit_id,
+insert into fs.files (commit_id, path, content, is_deleted, is_symlink)
+select p_commit_id,
   p.file_path,
   '',
-  TRUE,
-  FALSE
-FROM patch p
-WHERE p.need_delete
-  AND NOT EXISTS (
-    SELECT 1
-    FROM fs.files f
-    WHERE f.commit_id = p_commit_id
-      AND f.path = p.file_path
+  true,
+  false
+from patch p
+where p.need_delete
+  and not exists (
+    select 1
+    from fs.files f
+    where f.commit_id = p_commit_id
+      and f.path = p.file_path
   );
-GET DIAGNOSTICS v_rows = ROW_COUNT;
+get diagnostics v_rows = row_count;
 applied_file_count := applied_file_count + v_rows;
 -- Apply writes that the user has not already provided.
-WITH base_snapshot AS (
-  SELECT s.path,
+with base_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merge_base_commit_id) s
 ),
-target_snapshot AS (
-  SELECT s.path,
+target_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_branch_head_commit_id) s
 ),
-source_snapshot AS (
-  SELECT s.path,
+source_snapshot as (
+  select s.path,
     s.content,
     s.is_symlink
-  FROM fs._get_commit_snapshot_with_content(v_merged_from_commit_id) s
+  from fs._get_commit_snapshot_with_content(v_merged_from_commit_id) s
 ),
-user_writes AS (
-  SELECT f.path
-  FROM fs.files f
-  WHERE f.commit_id = p_commit_id
+user_writes as (
+  select f.path
+  from fs.files f
+  where f.commit_id = p_commit_id
 ),
-paths AS (
-  SELECT b.path AS file_path
-  FROM base_snapshot b
-  UNION
-  SELECT t.path AS file_path
-  FROM target_snapshot t
-  UNION
-  SELECT s.path AS file_path
-  FROM source_snapshot s
-  UNION
-  SELECT u.path AS file_path
-  FROM user_writes u
+paths as (
+  select b.path as file_path
+  from base_snapshot b
+  union
+  select t.path as file_path
+  from target_snapshot t
+  union
+  select s.path as file_path
+  from source_snapshot s
+  union
+  select u.path as file_path
+  from user_writes u
 ),
-states AS (
-  SELECT p.file_path,
-    (b.path IS NOT NULL) AS base_exists,
-    b.is_symlink AS base_is_symlink,
-    b.content AS base_content,
-    (t.path IS NOT NULL) AS target_exists,
-    t.is_symlink AS target_is_symlink,
-    t.content AS target_content,
-    (s.path IS NOT NULL) AS source_exists,
-    s.is_symlink AS source_is_symlink,
-    s.content AS source_content
-  FROM paths p
-    LEFT JOIN base_snapshot b ON b.path = p.file_path
-    LEFT JOIN target_snapshot t ON t.path = p.file_path
-    LEFT JOIN source_snapshot s ON s.path = p.file_path
+states as (
+  select p.file_path,
+    (b.path is not null) as base_exists,
+    b.is_symlink as base_is_symlink,
+    b.content as base_content,
+    (t.path is not null) as target_exists,
+    t.is_symlink as target_is_symlink,
+    t.content as target_content,
+    (s.path is not null) as source_exists,
+    s.is_symlink as source_is_symlink,
+    s.content as source_content
+  from paths p
+    left join base_snapshot b on b.path = p.file_path
+    left join target_snapshot t on t.path = p.file_path
+    left join source_snapshot s on s.path = p.file_path
 ),
-diffs AS (
-  SELECT st.*,
+diffs as (
+  select st.*,
     (
-      st.source_exists IS DISTINCT
-      FROM st.base_exists
-        OR st.source_is_symlink IS DISTINCT
-      FROM st.base_is_symlink
-        OR st.source_content IS DISTINCT
-      FROM st.base_content
-    ) AS source_changed
-  FROM states st
+      st.source_exists is distinct
+      from st.base_exists
+        or st.source_is_symlink is distinct
+      from st.base_is_symlink
+        or st.source_content is distinct
+      from st.base_content
+    ) as source_changed
+  from states st
 ),
-desired AS (
-  SELECT d.file_path,
-    CASE
-      WHEN d.source_changed THEN d.source_exists
-      ELSE d.target_exists
-    END AS desired_exists,
-    CASE
-      WHEN d.source_changed THEN d.source_is_symlink
-      ELSE d.target_is_symlink
-    END AS desired_is_symlink,
-    CASE
-      WHEN d.source_changed THEN d.source_content
-      ELSE d.target_content
-    END AS desired_content,
+desired as (
+  select d.file_path,
+    case
+      when d.source_changed then d.source_exists
+      else d.target_exists
+    end as desired_exists,
+    case
+      when d.source_changed then d.source_is_symlink
+      else d.target_is_symlink
+    end as desired_is_symlink,
+    case
+      when d.source_changed then d.source_content
+      else d.target_content
+    end as desired_content,
     d.target_exists,
     d.target_is_symlink,
     d.target_content
-  FROM diffs d
+  from diffs d
 ),
-patch AS (
-  SELECT de.file_path,
+patch as (
+  select de.file_path,
     de.desired_exists,
     de.desired_is_symlink,
     de.desired_content,
     (
-      NOT de.desired_exists
-      AND de.target_exists
-    ) AS need_delete,
+      not de.desired_exists
+      and de.target_exists
+    ) as need_delete,
     (
       de.desired_exists
-      AND (
-        (NOT de.target_exists)
-        OR de.target_is_symlink IS DISTINCT
-        FROM de.desired_is_symlink
-          OR de.target_content IS DISTINCT
-        FROM de.desired_content
+      and (
+        (not de.target_exists)
+        or de.target_is_symlink is distinct
+        from de.desired_is_symlink
+          or de.target_content is distinct
+        from de.desired_content
       )
-    ) AS need_write
-  FROM desired de
+    ) as need_write
+  from desired de
 )
-INSERT INTO fs.files (commit_id, path, content, is_deleted, is_symlink)
-SELECT p_commit_id,
+insert into fs.files (commit_id, path, content, is_deleted, is_symlink)
+select p_commit_id,
   p.file_path,
   p.desired_content,
-  FALSE,
-  COALESCE(p.desired_is_symlink, FALSE)
-FROM patch p
-WHERE p.need_write
-  AND NOT EXISTS (
-    SELECT 1
-    FROM fs.files f
-    WHERE f.commit_id = p_commit_id
-      AND f.path = p.file_path
+  false,
+  coalesce(p.desired_is_symlink, false)
+from patch p
+where p.need_write
+  and not exists (
+    select 1
+    from fs.files f
+    where f.commit_id = p_commit_id
+      and f.path = p.file_path
   );
-GET DIAGNOSTICS v_rows = ROW_COUNT;
+get diagnostics v_rows = row_count;
 applied_file_count := applied_file_count + v_rows;
-IF p_target_branch_id IS NOT NULL THEN
-UPDATE fs.branches
-SET head_commit_id = p_commit_id
-WHERE id = p_target_branch_id;
-END IF;
-IF v_merge_base_commit_id = v_merged_from_commit_id THEN operation := 'already_up_to_date';
-ELSIF v_conflict_count > 0 THEN operation := 'merged_with_conflicts_resolved';
-ELSE operation := 'merged';
-END IF;
-new_target_head_commit_id := CASE
-  WHEN p_target_branch_id IS NULL THEN NULL
-  ELSE p_commit_id
-END;
-RETURN NEXT;
-END;
-$$ LANGUAGE plpgsql VOLATILE PARALLEL UNSAFE;
+if p_target_branch_id is not null then
+update fs.branches
+set head_commit_id = p_commit_id
+where id = p_target_branch_id;
+end if;
+if v_merge_base_commit_id = v_merged_from_commit_id then operation := 'already_up_to_date';
+elsif v_conflict_count > 0 then operation := 'merged_with_conflicts_resolved';
+else operation := 'merged';
+end if;
+new_target_head_commit_id := case
+  when p_target_branch_id is null then null
+  else p_commit_id
+end;
+return next;
+end;
+$$ language plpgsql volatile parallel unsafe;

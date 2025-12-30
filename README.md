@@ -35,11 +35,17 @@ const sql = (strings: TemplateStringsArray, ...values: Interpolable[]) =>
   new QueryableStatement(strings, values);
 
 // Simple query without values
-const result1 = await sql`select 1`.query();
+const result1 = await sql`
+  select
+    1
+`.query();
 console.log(result1.rows); // [{ "?column?": 1 }]
 
 // Query with parameterized values
-const result2 = await sql`select ${1} as value`.query();
+const result2 = await sql`
+  select
+    ${1} as value
+`.query();
 console.log(result2.rows); // [{ value: 1 }]
 ```
 
@@ -48,8 +54,18 @@ console.log(result2.rows); // [{ value: 1 }]
 You can embed SQL statements within other statements:
 
 ```typescript
-const result =
-  await sql`select exists (${sql`select * from table where id = ${"abc"}`}) and ${true}`.query();
+const result = await sql`
+  select
+    exists (${sql`
+      select
+        *
+      from
+        table
+      where
+        id = ${"abc"}
+    `})
+    and ${true}
+`.query();
 
 console.log(result.rows);
 // The nested statement is automatically flattened and parameterized
@@ -87,14 +103,18 @@ const sql = Object.assign(
           "",
           ...values.map((_, i, { length }) => (i + 1 === length ? "" : ",")),
         ],
-        values
+        values,
       );
     },
-  }
+  },
 );
 
-const result =
-  await sql`select ${sql.ref("abc")} and ${sql.literal({ a: 1 })} and col in (${sql.csv([1, 2, 3])})`.query();
+const result = await sql`
+  select
+    ${sql.ref("abc")}
+    and ${sql.literal({ a: 1 })}
+    and col in (${sql.csv([1, 2, 3])})
+`.query();
 // Executes: select "abc" and $1 and col in ($2,$3,$4)
 ```
 

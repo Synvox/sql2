@@ -35,20 +35,18 @@ src/
 
 ### Migration File Example
 
-Each migration file exports a `name` and an `up` function:
+Each migration file exports an `up` function:
 
 ```typescript
 // src/migrations/20240101_000000_create_users.ts
 import type { sql } from "../db.ts";
 
-export const name = "20240101_000000_create_users";
-
 export async function up(sql: typeof sql) {
   await sql`
-    CREATE TABLE users (
-      id SERIAL PRIMARY KEY,
-      email TEXT NOT NULL UNIQUE,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+    create table users (
+      id SERIAL primary key,
+      email TEXT not null unique,
+      created_at TIMESTAMPTZ default NOW()
     )
   `.exec();
 }
@@ -58,16 +56,14 @@ export async function up(sql: typeof sql) {
 // src/migrations/20240101_000001_create_posts.ts
 import type { sql } from "../db.ts";
 
-export const name = "20240101_000001_create_posts";
-
 export async function up(sql: typeof sql) {
   await sql`
-    CREATE TABLE posts (
-      id SERIAL PRIMARY KEY,
-      user_id INTEGER REFERENCES users(id),
-      title TEXT NOT NULL,
+    create table posts (
+      id SERIAL primary key,
+      user_id INTEGER references users (id),
+      title TEXT not null,
       content TEXT,
-      created_at TIMESTAMPTZ DEFAULT NOW()
+      created_at TIMESTAMPTZ default NOW()
     )
   `.exec();
 }
@@ -85,16 +81,25 @@ import { sql } from "./db.ts";
 // Install migrations schema (run once)
 await migrationsPlugin(sql);
 
+async function importMigration(name) {
+  return {
+    name,
+    ...(await import(`./migrations/${name}.ts`))
+  }
+}
+
 // Import migrations in order
 const migrations = [
-  await import("./migrations/20240101_000000_create_users.ts"),
-  await import("./migrations/20240101_000001_create_posts.ts"),
-  await import("./migrations/20240201_000000_add_user_email.ts"),
+  await importMigration("20240101_000000_create_users"),
+  await importMigration("20240101_000001_create_posts"),
+  await importMigration("20240201_000000_add_user_email"),
 ];
 
 // Run pending migrations
 const result = await runMigrations(sql, migrations);
-console.log(`Applied ${result.applied.length} migrations in batch ${result.batch}`);
+console.log(
+  `Applied ${result.applied.length} migrations in batch ${result.batch}`,
+);
 ```
 
 ### Database Setup
@@ -127,23 +132,23 @@ The plugin creates a `migrations` schema with two tables:
 
 Tracks all applied migrations.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | SERIAL | Auto-incrementing primary key |
-| name | TEXT | Unique migration name |
-| batch | INTEGER | Batch number (migrations run together share a batch) |
-| migration_time | TIMESTAMPTZ | When the migration was applied |
+| Column         | Type        | Description                                          |
+| -------------- | ----------- | ---------------------------------------------------- |
+| id             | SERIAL      | Auto-incrementing primary key                        |
+| name           | TEXT        | Unique migration name                                |
+| batch          | INTEGER     | Batch number (migrations run together share a batch) |
+| migration_time | TIMESTAMPTZ | When the migration was applied                       |
 
 ### `migrations.migrations_lock`
 
 Prevents concurrent migration runs.
 
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | Always 1 (single-row table) |
-| is_locked | BOOLEAN | Whether a migration is in progress |
-| locked_at | TIMESTAMPTZ | When the lock was acquired |
-| locked_by | TEXT | Identifier of the process holding the lock |
+| Column    | Type        | Description                                |
+| --------- | ----------- | ------------------------------------------ |
+| id        | INTEGER     | Always 1 (single-row table)                |
+| is_locked | BOOLEAN     | Whether a migration is in progress         |
+| locked_at | TIMESTAMPTZ | When the lock was acquired                 |
+| locked_by | TEXT        | Identifier of the process holding the lock |
 
 ## API Reference
 
@@ -169,15 +174,18 @@ const result = await runMigrations(sql, migrations, "my-app");
 ```
 
 **Parameters:**
+
 - `sql` - The sql tagged template function
 - `migrations` - Array of migration objects
 - `lockerName` - Optional identifier for the running process (default: "sql2-migrations")
 
 **Returns:**
+
 - `applied` - Array of migration names that were applied
 - `batch` - The batch number used (0 if no migrations were run)
 
 **Throws:**
+
 - Error if lock cannot be acquired (another migration may be running)
 
 ### Migration Status
@@ -222,56 +230,88 @@ The plugin also provides SQL functions for direct database access:
 
 ```sql
 -- Acquire lock (returns TRUE if successful)
-SELECT migrations.acquire_lock('my-process-name');
+select
+  migrations.acquire_lock ('my-process-name');
 
 -- Release lock
-SELECT migrations.release_lock();
+select
+  migrations.release_lock ();
 
 -- Check if locked
-SELECT migrations.is_locked();
+select
+  migrations.is_locked ();
 
 -- Get lock details
-SELECT * FROM migrations.get_lock_status();
+select
+  *
+from
+  migrations.get_lock_status ();
 ```
 
 ### Batch Functions
 
 ```sql
 -- Get current batch number (0 if no migrations)
-SELECT migrations.get_current_batch();
+select
+  migrations.get_current_batch ();
 
 -- Get next batch number
-SELECT migrations.get_next_batch();
+select
+  migrations.get_next_batch ();
 ```
 
 ### Migration Recording
 
 ```sql
 -- Record a migration as applied
-SELECT * FROM migrations.record_migration('migration_name');
-SELECT * FROM migrations.record_migration('migration_name', 5); -- specific batch
+select
+  *
+from
+  migrations.record_migration ('migration_name');
 
+select
+  *
+from
+  migrations.record_migration ('migration_name', 5);
+
+-- specific batch
 -- Check if migration exists
-SELECT migrations.has_migration('migration_name');
+select
+  migrations.has_migration ('migration_name');
 ```
 
 ### Migration Queries
 
 ```sql
 -- Get all applied migrations
-SELECT * FROM migrations.get_applied_migrations();
+select
+  *
+from
+  migrations.get_applied_migrations ();
 
 -- Get migrations in a specific batch
-SELECT * FROM migrations.get_migrations_by_batch(1);
+select
+  *
+from
+  migrations.get_migrations_by_batch (1);
 
 -- Get latest batch migrations
-SELECT * FROM migrations.get_latest_batch_migrations();
+select
+  *
+from
+  migrations.get_latest_batch_migrations ();
 
 -- Get pending migrations from a list
-SELECT * FROM migrations.get_pending_migrations(ARRAY['mig1', 'mig2', 'mig3']);
+select
+  *
+from
+  migrations.get_pending_migrations (array['mig1', 'mig2', 'mig3']);
 
 -- Get migration statistics
-SELECT * FROM migrations.get_stats();
+select
+  *
+from
+  migrations.get_stats ();
 ```
 
 ## Migration Naming Conventions
@@ -283,6 +323,7 @@ YYYYMMDD_HHMMSS_description
 ```
 
 Examples:
+
 - `20240101_000000_create_users`
 - `20240115_143022_add_user_email`
 - `20240201_091500_create_posts_table`
@@ -317,10 +358,11 @@ Need to undo something? Create a new migration that reverses the change:
 // src/migrations/20240201_000000_drop_user_nickname.ts
 import type { sql } from "../db.ts";
 
-export const name = "20240201_000000_drop_user_nickname";
-
 export async function up(sql: typeof sql) {
-  await sql`ALTER TABLE users DROP COLUMN nickname`.exec();
+  await sql`
+    alter table users
+    drop column nickname
+  `.exec();
 }
 ```
 
@@ -330,30 +372,43 @@ As your project evolves, simply add new migration files and update your imports:
 
 ```typescript
 // src/migrate.ts
-import { migrationsPlugin, runMigrations, getMigrationStatus } from "sql2/migrations";
+import {
+  migrationsPlugin,
+  runMigrations,
+  getMigrationStatus,
+} from "sql2/migrations";
 import { sql } from "./db.ts";
 
 await migrationsPlugin(sql);
 
+async function importMigration(name) {
+  return {
+    name,
+    ...(await import(`./migrations/${name}.ts`))
+  }
+}
+
 // Add new migrations to this array as you create them
 const migrations = [
   // Initial schema
-  await import("./migrations/20240101_000000_create_users.ts"),
-  await import("./migrations/20240101_000001_create_posts.ts"),
+  await importMigration("20240101_000000_create_users"),
+  await importMigration("20240101_000001_create_posts"),
 
   // Added later
-  await import("./migrations/20240115_000000_add_user_profile.ts"),
-  await import("./migrations/20240115_000001_add_posts_published.ts"),
+  await importMigration("20240115_000000_add_user_profile"),
+  await importMigration("20240115_000001_add_posts_published"),
 
   // Added even later
-  await import("./migrations/20240201_000000_create_comments.ts"),
+  await importMigration("20240201_000000_create_comments"),
 ];
 
 // Run any pending migrations
 const result = await runMigrations(sql, migrations);
 
 if (result.applied.length > 0) {
-  console.log(`Applied ${result.applied.length} migrations in batch ${result.batch}:`);
+  console.log(
+    `Applied ${result.applied.length} migrations in batch ${result.batch}:`,
+  );
   result.applied.forEach((name) => console.log(`  - ${name}`));
 } else {
   console.log("No pending migrations");
@@ -361,7 +416,9 @@ if (result.applied.length > 0) {
 
 // Check overall status
 const status = await getMigrationStatus(sql, migrations);
-console.log(`\nTotal: ${status.stats.total_migrations} migrations across ${status.stats.total_batches} batches`);
+console.log(
+  `\nTotal: ${status.stats.total_migrations} migrations across ${status.stats.total_batches} batches`,
+);
 ```
 
 ## Error Handling

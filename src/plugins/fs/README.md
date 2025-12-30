@@ -135,276 +135,588 @@ direct `UPDATE` because `parent_commit_id` is `NULL`.
 
 ```sql
 -- Create a repository (auto-creates main branch; it starts empty)
-INSERT INTO fs.repositories (name) VALUES ('my-web-app')
-RETURNING id;
+insert into
+  fs.repositories (name)
+values
+  ('my-web-app')
+returning
+  id;
 
 -- List all fs.repositories
-SELECT id, name, created_at FROM fs.repositories;
+select
+  id,
+  name,
+  created_at
+from
+  fs.repositories;
 
 -- Get repository with default branch info
-SELECT r.*, b.name as default_branch_name, b.head_commit_id
-FROM fs.repositories r
-LEFT JOIN fs.branches b ON r.default_branch_id = b.id;
+select
+  r.*,
+  b.name as default_branch_name,
+  b.head_commit_id
+from
+  fs.repositories r
+  left join fs.branches b on r.default_branch_id = b.id;
 ```
 
 ### 2. Branch Management
 
 ```sql
 -- Create a feature branch (defaults to starting at the repository default branch head)
-INSERT INTO fs.branches (repository_id, name)
-VALUES ('repo-id', 'feature/user-auth')
-RETURNING id;
+insert into
+  fs.branches (repository_id, name)
+values
+  ('repo-id', 'feature/user-auth')
+returning
+  id;
 
 -- Create a feature branch starting from a specific commit
-INSERT INTO fs.branches (repository_id, name, head_commit_id)
-VALUES ('repo-id', 'feature/user-auth', 'commit-id')
-RETURNING id;
+insert into
+  fs.branches (repository_id, name, head_commit_id)
+values
+  ('repo-id', 'feature/user-auth', 'commit-id')
+returning
+  id;
 
 -- List fs.branches for a repository
-SELECT id, name, head_commit_id, created_at
-FROM fs.branches
-WHERE repository_id = 'repo-id';
+select
+  id,
+  name,
+  head_commit_id,
+  created_at
+from
+  fs.branches
+where
+  repository_id = 'repo-id';
 
 -- Switch default branch (conceptually)
-UPDATE fs.repositories
-SET default_branch_id = (SELECT id FROM fs.branches WHERE name = 'main')
-WHERE id = 'repo-id';
+update fs.repositories
+set
+  default_branch_id = (
+    select
+      id
+    from
+      fs.branches
+    where
+      name = 'main'
+  )
+where
+  id = 'repo-id';
 ```
 
 ### 3. Making Commits
 
 ```sql
 -- Create a commit on main (fast-forward finalize)
-WITH main_branch AS (
-  SELECT id AS branch_id, head_commit_id
-  FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'main'
-)
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-SELECT 'repo-id', head_commit_id, 'Add user authentication'
-FROM main_branch
-RETURNING id INTO commit_id;
+with
+  main_branch as (
+    select
+      id as branch_id,
+      head_commit_id
+    from
+      fs.branches
+    where
+      repository_id = 'repo-id'
+      and name = 'main'
+  )
+insert into
+  fs.commits (repository_id, parent_commit_id, message)
+select
+  'repo-id',
+  head_commit_id,
+  'Add user authentication'
+from
+  main_branch
+returning
+  id into commit_id;
 
 -- Write files for that commit
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (commit_id, '/src/auth.js', 'export const auth = true;');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    commit_id,
+    '/src/auth.js',
+    'export const auth = true;'
+  );
 
 -- Apply changes and advance branch head
-SELECT * FROM fs.finalize_commit(
-  commit_id,
-  (SELECT branch_id FROM main_branch)
-);
+select
+  *
+from
+  fs.finalize_commit (
+    commit_id,
+    (
+      select
+        branch_id
+      from
+        main_branch
+    )
+  );
 
 -- Create a commit on a feature branch based on its head
-WITH feature_branch AS (
-  SELECT id AS branch_id, head_commit_id
-  FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'feature/user-auth'
-)
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-SELECT 'repo-id', head_commit_id, 'Implement login form'
-FROM feature_branch
-RETURNING id INTO commit_id;
+with
+  feature_branch as (
+    select
+      id as branch_id,
+      head_commit_id
+    from
+      fs.branches
+    where
+      repository_id = 'repo-id'
+      and name = 'feature/user-auth'
+  )
+insert into
+  fs.commits (repository_id, parent_commit_id, message)
+select
+  'repo-id',
+  head_commit_id,
+  'Implement login form'
+from
+  feature_branch
+returning
+  id into commit_id;
 
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (commit_id, '/src/login.js', 'export function login() { return true; }');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    commit_id,
+    '/src/login.js',
+    'export function login() { return true; }'
+  );
 
-SELECT * FROM fs.finalize_commit(
-  commit_id,
-  (SELECT branch_id FROM feature_branch)
-);
+select
+  *
+from
+  fs.finalize_commit (
+    commit_id,
+    (
+      select
+        branch_id
+      from
+        feature_branch
+    )
+  );
 
 -- List commit history/tree for a repository
-WITH RECURSIVE commit_history AS (
-  -- Start with current branch heads
-  SELECT c.id, c.parent_commit_id, c.message, c.created_at,
-         b.name as branch_name, 0 as depth
-  FROM fs.commits c
-  LEFT JOIN fs.branches b ON c.id = b.head_commit_id
-  WHERE c.repository_id = 'repo-id'
-
-  UNION ALL
-
-  -- Recursively follow parent commit chain
-  SELECT c.id, c.parent_commit_id, c.message, c.created_at,
-         ch.branch_name, ch.depth + 1
-  FROM fs.commits c
-  JOIN commit_history ch ON c.id = ch.parent_commit_id
-)
-SELECT id, message, created_at, branch_name,
-       REPEAT('  ', depth) || '- ' || LEFT(message, 50) as tree_view
-FROM commit_history
-ORDER BY depth ASC, created_at DESC;
+with recursive
+  commit_history as (
+    -- Start with current branch heads
+    select
+      c.id,
+      c.parent_commit_id,
+      c.message,
+      c.created_at,
+      b.name as branch_name,
+      0 as depth
+    from
+      fs.commits c
+      left join fs.branches b on c.id = b.head_commit_id
+    where
+      c.repository_id = 'repo-id'
+    union all
+    -- Recursively follow parent commit chain
+    select
+      c.id,
+      c.parent_commit_id,
+      c.message,
+      c.created_at,
+      ch.branch_name,
+      ch.depth + 1
+    from
+      fs.commits c
+      join commit_history ch on c.id = ch.parent_commit_id
+  )
+select
+  id,
+  message,
+  created_at,
+  branch_name,
+  REPEAT('  ', depth) || '- ' || LEFT(message, 50) as tree_view
+from
+  commit_history
+order by
+  depth asc,
+  created_at desc;
 ```
 
 ### 4. File Operations
 
 ```sql
 -- First create a commit anchored to the branch head
-WITH main_branch AS (
-  SELECT id AS branch_id, head_commit_id
-  FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'main'
-)
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-SELECT 'repo-id', head_commit_id, 'Add source files'
-FROM main_branch
-RETURNING id INTO commit_id;
+with
+  main_branch as (
+    select
+      id as branch_id,
+      head_commit_id
+    from
+      fs.branches
+    where
+      repository_id = 'repo-id'
+      and name = 'main'
+  )
+insert into
+  fs.commits (repository_id, parent_commit_id, message)
+select
+  'repo-id',
+  head_commit_id,
+  'Add source files'
+from
+  main_branch
+returning
+  id into commit_id;
 
 -- Add files to the commit
-INSERT INTO fs.files (commit_id, path, content)
-VALUES
-  (commit_id, '/src/index.js', 'console.log("Hello World");'),
-  (commit_id, '/src/utils.js', 'export function helper() { return true; }'),
-  (commit_id, '/README.md', '# My Project\n\nA cool project.');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    commit_id,
+    '/src/index.js',
+    'console.log("Hello World");'
+  ),
+  (
+    commit_id,
+    '/src/utils.js',
+    'export function helper() { return true; }'
+  ),
+  (
+    commit_id,
+    '/README.md',
+    '# My Project\n\nA cool project.'
+  );
 
 -- Update a file (creates new version)
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (commit_id, '/src/index.js', 'console.log("Hello, updated world!");');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    commit_id,
+    '/src/index.js',
+    'console.log("Hello, updated world!");'
+  );
 
 -- Apply the commit and advance the branch
-SELECT * FROM fs.finalize_commit(
-  commit_id,
-  (SELECT branch_id FROM main_branch)
-);
+select
+  *
+from
+  fs.finalize_commit (
+    commit_id,
+    (
+      select
+        branch_id
+      from
+        main_branch
+    )
+  );
 
 -- Read current file content
-SELECT fs.read_file('commit-id', '/src/index.js') as content;
+select
+  fs.read_file ('commit-id', '/src/index.js') as content;
 
 -- List all files in a commit
-SELECT path, is_symlink FROM fs.get_commit_snapshot('commit-id');
+select
+  path,
+  is_symlink
+from
+  fs.get_commit_snapshot ('commit-id');
 ```
 
 ### 5. Version Control Operations
 
 ```sql
 -- Get file history across fs.commits
-SELECT * FROM fs.get_file_history('latest-commit-id', '/src/index.js');
+select
+  *
+from
+  fs.get_file_history ('latest-commit-id', '/src/index.js');
 
 -- Browse repository contents (equivalent to default branch)
-SELECT * FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id')
-));
+select
+  *
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = (
+          select
+            default_branch_id
+          from
+            fs.repositories
+          where
+            id = 'repo-id'
+        )
+    )
+  );
 
 -- Compare file versions
-SELECT
+select
   c1.message as commit_message,
-  fs.read_file(c1.id, '/src/index.js') as old_content,
-  fs.read_file(c2.id, '/src/index.js') as new_content
-FROM fs.commits c1, fs.commits c2
-WHERE c1.parent_commit_id IS NULL  -- root commit
-  AND c2.parent_commit_id = c1.id;  -- next commit
+  fs.read_file (c1.id, '/src/index.js') as old_content,
+  fs.read_file (c2.id, '/src/index.js') as new_content
+from
+  fs.commits c1,
+  fs.commits c2
+where
+  c1.parent_commit_id is null -- root commit
+  and c2.parent_commit_id = c1.id;
+
+-- next commit
 ```
 
 ### 6. Advanced Branching Workflow
 
 ```sql
 -- Create feature branch from current main
-INSERT INTO fs.branches (repository_id, name)
-VALUES ('repo-id', 'feature/dark-mode')
-RETURNING id INTO feature_branch_id;
+insert into
+  fs.branches (repository_id, name)
+values
+  ('repo-id', 'feature/dark-mode')
+returning
+  id into feature_branch_id;
 
 -- Work on feature branch
-WITH feature_branch AS (
-  SELECT id AS branch_id, head_commit_id
-  FROM fs.branches
-  WHERE id = feature_branch_id
-)
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-SELECT 'repo-id', head_commit_id, 'Add dark mode styles'
-FROM feature_branch
-RETURNING id INTO feature_commit_id;
+with
+  feature_branch as (
+    select
+      id as branch_id,
+      head_commit_id
+    from
+      fs.branches
+    where
+      id = feature_branch_id
+  )
+insert into
+  fs.commits (repository_id, parent_commit_id, message)
+select
+  'repo-id',
+  head_commit_id,
+  'Add dark mode styles'
+from
+  feature_branch
+returning
+  id into feature_commit_id;
 
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (feature_commit_id, '/src/theme.css', '.dark { background: black; color: white; }');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    feature_commit_id,
+    '/src/theme.css',
+    '.dark { background: black; color: white; }'
+  );
 
-SELECT * FROM fs.finalize_commit(
-  feature_commit_id,
-  (SELECT branch_id FROM feature_branch)
-);
+select
+  *
+from
+  fs.finalize_commit (
+    feature_commit_id,
+    (
+      select
+        branch_id
+      from
+        feature_branch
+    )
+  );
 
 -- Continue working on main branch
-WITH main_branch AS (
-  SELECT id AS branch_id, head_commit_id
-  FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'main'
-)
-INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-SELECT 'repo-id', head_commit_id, 'Add user preferences'
-FROM main_branch
-RETURNING id INTO main_commit_id;
+with
+  main_branch as (
+    select
+      id as branch_id,
+      head_commit_id
+    from
+      fs.branches
+    where
+      repository_id = 'repo-id'
+      and name = 'main'
+  )
+insert into
+  fs.commits (repository_id, parent_commit_id, message)
+select
+  'repo-id',
+  head_commit_id,
+  'Add user preferences'
+from
+  main_branch
+returning
+  id into main_commit_id;
 
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (main_commit_id, '/src/preferences.js', 'const theme = localStorage.getItem("theme");');
+insert into
+  fs.files (commit_id, path, content)
+values
+  (
+    main_commit_id,
+    '/src/preferences.js',
+    'const theme = localStorage.getItem("theme");'
+  );
 
-SELECT * FROM fs.finalize_commit(
-  main_commit_id,
-  (SELECT branch_id FROM main_branch)
-);
-****
+select
+  *
+from
+  fs.finalize_commit (
+    main_commit_id,
+    (
+      select
+        branch_id
+      from
+        main_branch
+    )
+  );
+
+* * * *
 -- View different branch contents
-SELECT 'Main branch:' as branch, path, LEFT(content, 50) as content_preview
-FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id')
-))
-
-UNION ALL
-
-SELECT 'Feature branch:' as branch, path, LEFT(content, 50) as content_preview
-FROM fs.get_commit_snapshot((SELECT head_commit_id FROM fs.branches WHERE id = feature_branch_id));
+select
+  'Main branch:' as branch,
+  path,
+  LEFT(content, 50) as content_preview
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = (
+          select
+            default_branch_id
+          from
+            fs.repositories
+          where
+            id = 'repo-id'
+        )
+    )
+  )
+union all
+select
+  'Feature branch:' as branch,
+  path,
+  LEFT(content, 50) as content_preview
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = feature_branch_id
+    )
+  );
 ```
 
 ### 7. Repository Browsing
 
 ```sql
 -- Browse current repository contents (default branch)
-SELECT gcc.repository_name, gcc.path, LEFT(gcc.content, 100) as content_preview
-FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE name = 'my-project')
-)) gcc
-ORDER BY gcc.path;
+select
+  gcc.repository_name,
+  gcc.path,
+  LEFT(gcc.content, 100) as content_preview
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = (
+          select
+            default_branch_id
+          from
+            fs.repositories
+          where
+            name = 'my-project'
+        )
+    )
+  ) gcc
+order by
+  gcc.path;
 
 -- Get detailed file info including commit metadata
-SELECT
+select
   gcc.repository_name as repo_name,
   b.name as branch_name,
   gcc.path,
   gcc.content,
   gcc.commit_message as snapshot_commit_message,
   gcc.commit_created_at as snapshot_created_at
-FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id')
-)) gcc
-CROSS JOIN fs.branches b
-WHERE b.id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id')
-ORDER BY gcc.path;
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = (
+          select
+            default_branch_id
+          from
+            fs.repositories
+          where
+            id = 'repo-id'
+        )
+    )
+  ) gcc
+  cross join fs.branches b
+where
+  b.id = (
+    select
+      default_branch_id
+    from
+      fs.repositories
+    where
+      id = 'repo-id'
+  )
+order by
+  gcc.path;
 
 -- Compare file sizes across fs.branches
-SELECT
+select
   'main' as branch,
   COUNT(*) as file_count,
   SUM(LENGTH(gcc.content)) as total_bytes
-FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'main'
-)) gcc
-
-UNION ALL
-
-SELECT
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        repository_id = 'repo-id'
+        and name = 'main'
+    )
+  ) gcc
+union all
+select
   'feature',
   COUNT(*),
   SUM(LENGTH(gcc.content))
-FROM fs.get_commit_snapshot((
-  SELECT head_commit_id FROM fs.branches
-  WHERE repository_id = 'repo-id' AND name = 'feature'
-)) gcc;
+from
+  fs.get_commit_snapshot (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        repository_id = 'repo-id'
+        and name = 'feature'
+    )
+  ) gcc;
 ```
-```
+
+````
 
 ## Merging with Linear History
 
@@ -422,9 +734,9 @@ This system keeps history linear (each commit has one parent) while still tracki
    -- Optional conflict resolution authored by the user
    INSERT INTO fs.files (commit_id, path, content)
    VALUES (merge_commit_id, '/conflicted.txt', 'resolved content');
-   ```
+````
 
-2) **Finalize the merge** (system-assisted):
+2. **Finalize the merge** (system-assisted):
    - Applies non-conflicting changes from the source onto the merge commit.
    - Verifies every conflicting path has a user-supplied row in `fs.files` for the merge commit (otherwise raises).
    - Advances the target branch head to the merge commit.
@@ -434,11 +746,13 @@ This system keeps history linear (each commit has one parent) while still tracki
    ```
 
 Conflict workflow:
+
 - Discover conflicts: `SELECT * FROM fs.get_conflicts($target_head, $source_head);`
 - If conflicts exist, insert resolutions on the merge commit before calling `fs.finalize_commit`.
 - If no conflicts, `fs.finalize_commit` applies remaining changes and (optionally) moves the branch head.
 
 `fs.finalize_commit` specifics:
+
 - Inputs: `commit_id` (required) and `target_branch_id` (optional).
   - When `target_branch_id` is provided: it must belong to the same repo and its head must equal the merge commit’s `parent_commit_id`; the branch head is advanced to the merge commit.
   - When omitted: files are applied but branch pointers do not move.
@@ -449,15 +763,18 @@ Conflict workflow:
 - Returns: `operation` (`merged`, `merged_with_conflicts_resolved`, `already_up_to_date`, or `fast_forward`), `applied_file_count`, and `new_target_head_commit_id` (NULL when no branch was provided).
 
 Fast-forward / already up to date:
+
 - If the source is already contained in the target, `fs.finalize_commit` returns `operation = 'already_up_to_date'` and leaves files unchanged.
 
 Rebase (still linear):
+
 - `SELECT * FROM fs.rebase_branch($branch_id, $onto_branch_id, 'Rebase message');`
 - Conflicts are detected with `fs.get_conflicts` and will raise if present.
 
 ## Reference Merge Workflows
 
 ### Fast-forward-like merge (no conflicts)
+
 ```sql
 -- Prepare merge commit
 INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id)
@@ -469,6 +786,7 @@ SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
 ```
 
 ### Merge with conflicts
+
 ```sql
 -- Inspect conflicts
 SELECT * FROM fs.get_conflicts($target_head, $source_head);
@@ -509,6 +827,7 @@ SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
 - **`fs.rebase_branch(branch_id, onto_branch_id, message?)`** - Replay branch changes onto another head, keeping linear history
 
 **Returns columns:**
+
 - `repository_id`, `repository_name` - Repository info
 - `commit_id` - Commit identifier
 - `path` - File path
@@ -518,22 +837,65 @@ SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
 **Note:** `fs.get_commit_delta` and `fs.get_commit_snapshot` intentionally do **not** return file `content`. Use `fs.read_file(commit_id, path)` for content lookups.
 
 **Usage:**
+
 ```sql
 -- Get file delta for any commit
-SELECT * FROM fs.get_commit_delta('commit-id');
+select
+  *
+from
+  fs.get_commit_delta ('commit-id');
 
 -- Get contents of branch head (resolve branch to commit first)
-SELECT gcc.*, b.name as branch_name
-FROM fs.get_commit_delta((SELECT head_commit_id FROM fs.branches WHERE id = 'branch-id')) gcc
-CROSS JOIN fs.branches b WHERE b.id = 'branch-id';
+select
+  gcc.*,
+  b.name as branch_name
+from
+  fs.get_commit_delta (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = 'branch-id'
+    )
+  ) gcc
+  cross join fs.branches b
+where
+  b.id = 'branch-id';
 
 -- Get contents of default branch
-SELECT gcc.*, b.name as branch_name
-FROM fs.get_commit_delta((
-  SELECT head_commit_id FROM fs.branches
-  WHERE id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id')
-)) gcc
-CROSS JOIN fs.branches b WHERE b.id = (SELECT default_branch_id FROM fs.repositories WHERE id = 'repo-id');
+select
+  gcc.*,
+  b.name as branch_name
+from
+  fs.get_commit_delta (
+    (
+      select
+        head_commit_id
+      from
+        fs.branches
+      where
+        id = (
+          select
+            default_branch_id
+          from
+            fs.repositories
+          where
+            id = 'repo-id'
+        )
+    )
+  ) gcc
+  cross join fs.branches b
+where
+  b.id = (
+    select
+      default_branch_id
+    from
+      fs.repositories
+    where
+      id = 'repo-id'
+  );
 ```
 
 ## Path Validation

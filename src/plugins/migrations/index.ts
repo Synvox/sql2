@@ -1,27 +1,17 @@
 import * as fsp from "node:fs/promises";
-import {
-  QueryableStatement,
-  Statement,
-  join,
-  type Interpolable,
-} from "../../sql2.ts";
-
-const comma = new Statement([","], []);
+import { getSql } from "../../sql2.ts";
 
 /**
- * Migration function type - receives a sql tagged template function
- * and performs database operations
+ * Migration function type - performs database operations
  */
-export type MigrationFn<T extends QueryableStatement> = (
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T
-) => Promise<void>;
+export type MigrationFn = () => Promise<void>;
 
 /**
  * Migration definition with name and up function
  */
-export interface Migration<T extends QueryableStatement> {
+export interface Migration {
   name: string;
-  up: MigrationFn<T>;
+  up: MigrationFn;
 }
 
 /**
@@ -36,12 +26,12 @@ export interface MigrationResult {
  * Installs the migrations schema and helper functions.
  * Call this once before using any migration functions.
  */
-export async function migrationsPlugin<T extends QueryableStatement>(
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T
-) {
+export async function migrationsPlugin() {
+  const sql = getSql({ camelize: false });
+
   const sqlScript = await fsp.readFile(
     new URL("./migrations.sql", import.meta.url),
-    "utf-8"
+    "utf-8",
   );
 
   const strings = Object.assign([sqlScript] as ReadonlyArray<string>, {
@@ -55,25 +45,26 @@ export async function migrationsPlugin<T extends QueryableStatement>(
  * Runs pending migrations in order.
  * Acquires a lock, runs migrations, records them, and releases the lock.
  *
- * @param sql - The sql tagged template function
  * @param migrations - Array of migration objects with name and up function
  * @param lockerName - Optional identifier for the process running migrations
  * @returns Object containing applied migration names and batch number
  */
-export async function runMigrations<T extends QueryableStatement>(
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T,
-  migrations: Migration<T>[],
-  lockerName: string = "sql2-migrations"
+export async function runMigrations(
+  migrations: Migration[],
+  lockerName: string = "sql2-migrations",
 ): Promise<MigrationResult> {
+  const sql = getSql({ camelize: false });
   // Try to acquire lock
-  const lockResult =
-    await sql`SELECT migrations.acquire_lock(${lockerName}) as acquired`.query<{
-      acquired: boolean;
-    }>();
+  const lockRow = await sql`
+    select
+      migrations.acquire_lock (${lockerName}) as acquired
+  `.first<{
+    acquired: boolean;
+  }>();
 
-  if (!lockResult.rows[0].acquired) {
+  if (!lockRow!.acquired) {
     throw new Error(
-      "Could not acquire migration lock. Another migration may be in progress."
+      "Could not acquire migration lock. Another migration may be in progress.",
     );
   }
 
@@ -82,57 +73,73 @@ export async function runMigrations<T extends QueryableStatement>(
     const migrationNames = migrations.map((m) => m.name);
 
     // Get pending migrations
-    const pendingResult =
-      await sql`SELECT name FROM migrations.get_pending_migrations(ARRAY[${join(migrationNames, comma)}]::text[])`.query<{
-        name: string;
-      }>();
+    const pendingRows = await sql`
+      select
+        name
+      from
+        migrations.get_pending_migrations (array[${sql.join(
+          migrationNames.map((n) => sql.literal(n)),
+        )}]::text[])
+    `.all<{
+      name: string;
+    }>();
 
-    const pendingNames = new Set(pendingResult.rows.map((r) => r.name));
+    const pendingNames = new Set(pendingRows.map((r) => r.name));
     const pendingMigrations = migrations.filter((m) =>
-      pendingNames.has(m.name)
+      pendingNames.has(m.name),
     );
 
     if (pendingMigrations.length === 0) {
-      await sql`SELECT migrations.release_lock()`.exec();
+      await sql`
+        select
+          migrations.release_lock ()
+      `.exec();
       return { applied: [], batch: 0 };
     }
 
     // Get batch number for this run
-    const batchResult =
-      await sql`SELECT migrations.get_next_batch() as batch`.query<{
-        batch: number;
-      }>();
-    const batch = batchResult.rows[0].batch;
+    const batchRow = await sql`
+      select
+        migrations.get_next_batch () as batch
+    `.first<{
+      batch: number;
+    }>();
+    const batch = batchRow!.batch;
 
     // Run migrations in order
     const applied: string[] = [];
     for (const migration of pendingMigrations) {
       // Run the migration
-      await migration.up(sql);
+      await migration.up();
 
       // Record it
-      await sql`SELECT migrations.record_migration(${migration.name}, ${batch})`.query();
+      await sql`
+        select
+          migrations.record_migration (
+            ${migration.name},
+            ${batch}
+          )
+      `.query();
       applied.push(migration.name);
     }
 
     return { applied, batch };
   } finally {
     // Always release lock
-    await sql`SELECT migrations.release_lock()`.query();
+    await sql`
+      select
+        migrations.release_lock ()
+    `.query();
   }
 }
 
 /**
  * Gets the status of all migrations.
  *
- * @param sql - The sql tagged template function
  * @param migrations - Array of migration objects to check against
  * @returns Object with applied, pending, and stats
  */
-export async function getMigrationStatus<T extends QueryableStatement>(
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T,
-  migrations: Migration<T>[]
-): Promise<{
+export async function getMigrationStatus(migrations: Migration[]): Promise<{
   applied: Array<{ name: string; batch: number; migration_time: Date }>;
   pending: string[];
   stats: {
@@ -143,24 +150,40 @@ export async function getMigrationStatus<T extends QueryableStatement>(
     last_batch: number;
   };
 }> {
+  const sql = getSql({ camelize: false });
   // Get applied migrations
-  const appliedResult =
-    await sql`SELECT * FROM migrations.get_applied_migrations()`.query<{
-      id: number;
-      name: string;
-      batch: number;
-      migration_time: Date;
-    }>();
+  const appliedRows = await sql`
+    select
+      *
+    from
+      migrations.get_applied_migrations ()
+  `.all<{
+    id: number;
+    name: string;
+    batch: number;
+    migration_time: Date;
+  }>();
 
   // Get pending migrations
   const migrationNames = migrations.map((m) => m.name);
-  const pendingResult =
-    await sql`SELECT name FROM migrations.get_pending_migrations(ARRAY[${join(migrationNames, comma)}]::text[])`.query<{
-      name: string;
-    }>();
+  const pendingRows = await sql`
+    select
+      name
+    from
+      migrations.get_pending_migrations (array[${sql.join(
+        migrationNames.map((n) => sql.literal(n)),
+      )}]::text[])
+  `.all<{
+    name: string;
+  }>();
 
   // Get stats
-  const statsResult = await sql`SELECT * FROM migrations.get_stats()`.query<{
+  const statsRow = await sql`
+    select
+      *
+    from
+      migrations.get_stats ()
+  `.first<{
     total_migrations: number;
     total_batches: number;
     last_migration_name: string | null;
@@ -169,13 +192,13 @@ export async function getMigrationStatus<T extends QueryableStatement>(
   }>();
 
   return {
-    applied: appliedResult.rows.map((r) => ({
+    applied: appliedRows.map((r) => ({
       name: r.name,
       batch: r.batch,
       migration_time: r.migration_time,
     })),
-    pending: pendingResult.rows.map((r) => r.name),
-    stats: statsResult.rows[0] || {
+    pending: pendingRows.map((r) => r.name),
+    stats: statsRow || {
       total_migrations: 0,
       total_batches: 0,
       last_migration_name: null,
@@ -188,35 +211,36 @@ export async function getMigrationStatus<T extends QueryableStatement>(
 /**
  * Checks if the migration lock is currently held.
  *
- * @param sql - The sql tagged template function
  * @returns Lock status information
  */
-export async function getLockStatus<T extends QueryableStatement>(
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T
-): Promise<{
+export async function getLockStatus(): Promise<{
   is_locked: boolean;
   locked_at: Date | null;
   locked_by: string | null;
 }> {
-  const result = await sql`SELECT * FROM migrations.get_lock_status()`.query<{
+  const sql = getSql({ camelize: false });
+  const row = await sql`
+    select
+      *
+    from
+      migrations.get_lock_status ()
+  `.first<{
     is_locked: boolean;
     locked_at: Date | null;
     locked_by: string | null;
   }>();
 
-  return (
-    result.rows[0] || { is_locked: false, locked_at: null, locked_by: null }
-  );
+  return row || { is_locked: false, locked_at: null, locked_by: null };
 }
 
 /**
  * Forces release of the migration lock.
  * Use with caution - only when you're sure no migration is running.
- *
- * @param sql - The sql tagged template function
  */
-export async function forceReleaseLock<T extends QueryableStatement>(
-  sql: (strings: TemplateStringsArray, ...values: Interpolable[]) => T
-): Promise<void> {
-  await sql`SELECT migrations.release_lock()`.exec();
+export async function forceReleaseLock(): Promise<void> {
+  const sql = getSql({ camelize: false });
+  await sql`
+    select
+      migrations.release_lock ()
+  `.exec();
 }
