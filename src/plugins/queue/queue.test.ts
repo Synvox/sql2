@@ -77,7 +77,6 @@ await provideClient(makeClient(dbRoot), async () => {
 describe("Queue Plugin", () => {
   describe("Queue Management", () => {
     itWithDb("should create a queue with default options", async () => {
-      const sql = getSql();
       const queue = await createQueue("test-queue");
 
       assert.strictEqual(queue.name, "test-queue");
@@ -92,7 +91,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should create a queue with custom options", async () => {
-      const sql = getSql();
       const queue = await createQueue("custom-queue", {
         retryLimit: 5,
         retryDelay: 120,
@@ -112,7 +110,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should update an existing queue", async () => {
-      const sql = getSql();
       await createQueue("update-queue", { retryLimit: 3 });
       const updated = await createQueue("update-queue", {
         retryLimit: 10,
@@ -122,7 +119,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should get a queue by name", async () => {
-      const sql = getSql();
       await createQueue("get-queue");
       const queue = await getQueue("get-queue");
 
@@ -132,13 +128,11 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should return null for non-existent queue", async () => {
-      const sql = getSql();
       const queue = await getQueue("non-existent-queue");
       assert.strictEqual(queue, null);
     });
 
     itWithDb("should get queue with job counts", async () => {
-      const sql = getSql();
       await createQueue("count-queue");
       await send("count-queue", { task: "test1" });
       await send("count-queue", { task: "test2" });
@@ -150,7 +144,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should list all queues", async () => {
-      const sql = getSql();
       await createQueue("list-queue-1");
       await createQueue("list-queue-2");
 
@@ -162,7 +155,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should delete a queue", async () => {
-      const sql = getSql();
       await createQueue("delete-queue");
 
       const deleted = await deleteQueue("delete-queue");
@@ -175,14 +167,12 @@ describe("Queue Plugin", () => {
     itWithDb(
       "should return false when deleting non-existent queue",
       async () => {
-        const sql = getSql();
         const deleted = await deleteQueue("non-existent-queue");
         assert.strictEqual(deleted, false);
       },
     );
 
     itWithDb("should create a queue with dead letter queue", async () => {
-      const sql = getSql();
       await createQueue("dead-letter-queue");
       const queue = await createQueue("main-queue", {
         deadLetter: "dead-letter-queue",
@@ -194,7 +184,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Sending", () => {
     itWithDb("should send a job to a queue", async () => {
-      const sql = getSql();
       await createQueue("send-queue");
       const result = await send("send-queue", { message: "hello" });
 
@@ -207,7 +196,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should send a job with delay", async () => {
-      const sql = getSql();
       await createQueue("delay-queue");
       const before = new Date();
       const result = await send(
@@ -222,7 +210,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should send a job with start after", async () => {
-      const sql = getSql();
       await createQueue("start-after-queue");
       const futureDate = new Date(Date.now() + 60000);
       const result = await send(
@@ -237,7 +224,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should send a job with priority", async () => {
-      const sql = getSql();
       await createQueue("priority-queue");
       const result = await send(
         "priority-queue",
@@ -250,7 +236,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should send a job with singleton key", async () => {
-      const sql = getSql();
       await createQueue("singleton-queue");
       const result1 = await send(
         "singleton-queue",
@@ -274,7 +259,6 @@ describe("Queue Plugin", () => {
     itWithDb(
       "should allow same singleton key after job completes",
       async () => {
-        const sql = getSql();
         await createQueue("singleton-complete-queue");
 
         const result1 = await send(
@@ -300,7 +284,6 @@ describe("Queue Plugin", () => {
     );
 
     itWithDb("should send batch of jobs", async () => {
-      const sql = getSql();
       await createQueue("batch-queue");
 
       const results = await sendBatch("batch-queue", [
@@ -317,7 +300,6 @@ describe("Queue Plugin", () => {
     itWithDb(
       "should throw error when sending to non-existent queue",
       async () => {
-        const sql = getSql();
         await assert.rejects(async () => {
           await send("non-existent-queue", { task: "test" });
         }, /Queue "non-existent-queue" does not exist/);
@@ -325,7 +307,6 @@ describe("Queue Plugin", () => {
     );
 
     itWithDb("should send job with custom retry options", async () => {
-      const sql = getSql();
       await createQueue("custom-retry-queue");
 
       const result = await send(
@@ -344,7 +325,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Fetching", () => {
     itWithDb("should fetch a job from the queue", async () => {
-      const sql = getSql();
       await createQueue("fetch-queue");
       await send("fetch-queue", { message: "fetch me" });
 
@@ -358,7 +338,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should fetch multiple jobs", async () => {
-      const sql = getSql();
       await createQueue("multi-fetch-queue");
       await send("multi-fetch-queue", { task: 1 });
       await send("multi-fetch-queue", { task: 2 });
@@ -369,7 +348,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should return empty array when no jobs available", async () => {
-      const sql = getSql();
       await createQueue("empty-queue");
 
       const jobs = await fetch("empty-queue", 1);
@@ -377,7 +355,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should fetch jobs by priority order", async () => {
-      const sql = getSql();
       await createQueue("priority-fetch-queue");
 
       await send("priority-fetch-queue", { task: "low" }, { priority: 1 });
@@ -393,7 +370,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should not fetch jobs with future start_after", async () => {
-      const sql = getSql();
       await createQueue("future-queue");
 
       await send("future-queue", { task: "now" }, {});
@@ -409,7 +385,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should not fetch already active jobs", async () => {
-      const sql = getSql();
       await createQueue("active-queue");
       await send("active-queue", { task: "test" });
 
@@ -421,7 +396,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should set expire_at when fetching", async () => {
-      const sql = getSql();
       await createQueue("expire-fetch-queue", { expireIn: 300 });
       await send("expire-fetch-queue", { task: "test" });
 
@@ -441,7 +415,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Completion", () => {
     itWithDb("should complete a job", async () => {
-      const sql = getSql();
       await createQueue("complete-queue");
       await send("complete-queue", { task: "complete me" });
 
@@ -455,7 +428,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should complete a job with output", async () => {
-      const sql = getSql();
       await createQueue("complete-output-queue");
       await send("complete-output-queue", { task: "process" });
 
@@ -472,7 +444,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should return null when completing non-active job", async () => {
-      const sql = getSql();
       await createQueue("non-active-queue");
       const sendResult = await send("non-active-queue", { task: "test" });
 
@@ -484,7 +455,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Failure", () => {
     itWithDb("should fail a job with retry", async () => {
-      const sql = getSql();
       await createQueue("fail-retry-queue", { retryLimit: 3 });
       await send("fail-retry-queue", { task: "will fail" });
 
@@ -528,7 +498,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should store last error", async () => {
-      const sql = getSql();
       await createQueue("error-queue", { retryLimit: 0 });
       await send("error-queue", { task: "test" });
 
@@ -541,7 +510,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should use exponential backoff for retries", async () => {
-      const sql = getSql();
       await createQueue("backoff-queue", {
         retryLimit: 5,
         retryDelay: 10,
@@ -563,7 +531,6 @@ describe("Queue Plugin", () => {
     itWithDb(
       "should send to dead letter queue on permanent failure",
       async () => {
-        const sql = getSql();
         await createQueue("dead-letter-dest");
         await createQueue("dead-letter-src", {
           retryLimit: 0,
@@ -584,7 +551,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Cancellation", () => {
     itWithDb("should cancel a created job", async () => {
-      const sql = getSql();
       await createQueue("cancel-queue");
       const sendResult = await send("cancel-queue", { task: "cancel me" });
 
@@ -599,7 +565,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should cancel an active job", async () => {
-      const sql = getSql();
       await createQueue("cancel-active-queue");
       await send("cancel-active-queue", { task: "cancel me" });
 
@@ -611,7 +576,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should not cancel completed job", async () => {
-      const sql = getSql();
       await createQueue("cancel-completed-queue");
       await send("cancel-completed-queue", { task: "done" });
 
@@ -625,7 +589,6 @@ describe("Queue Plugin", () => {
 
   describe("Job Retrieval", () => {
     itWithDb("should get job by id", async () => {
-      const sql = getSql();
       await createQueue("get-job-queue");
       const sendResult = await send("get-job-queue", {
         message: "hello",
@@ -642,13 +605,11 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should return null for non-existent job", async () => {
-      const sql = getSql();
       const job = await getJob("00000000-0000-0000-0000-000000000000");
       assert.strictEqual(job, null);
     });
 
     itWithDb("should list jobs in a queue", async () => {
-      const sql = getSql();
       await createQueue("list-jobs-queue");
       await send("list-jobs-queue", { task: 1 });
       await send("list-jobs-queue", { task: 2 });
@@ -659,7 +620,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should list jobs filtered by state", async () => {
-      const sql = getSql();
       await createQueue("list-state-queue");
       await send("list-state-queue", { task: 1 });
       await send("list-state-queue", { task: 2 });
@@ -680,7 +640,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should list jobs with pagination", async () => {
-      const sql = getSql();
       await createQueue("paginate-queue");
       for (let i = 0; i < 10; i++) {
         await send("paginate-queue", { task: i });
@@ -782,7 +741,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should purge all jobs from a queue", async () => {
-      const sql = getSql();
       await createQueue("purge-queue");
       await send("purge-queue", { task: 1 });
       await send("purge-queue", { task: 2 });
@@ -796,7 +754,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should purge jobs by state", async () => {
-      const sql = getSql();
       await createQueue("purge-state-queue");
       await send("purge-state-queue", { task: 1 });
       await send("purge-state-queue", { task: 2 });
@@ -815,7 +772,6 @@ describe("Queue Plugin", () => {
 
   describe("Statistics", () => {
     itWithDb("should get queue stats", async () => {
-      const sql = getSql();
       await createQueue("stats-queue");
       await send("stats-queue", { task: 1 });
       await send("stats-queue", { task: 2 });
@@ -832,7 +788,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should get stats for all queues", async () => {
-      const sql = getSql();
       await createQueue("stats-all-1");
       await createQueue("stats-all-2");
       await send("stats-all-1", { task: 1 });
@@ -846,7 +801,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should get activity data", async () => {
-      const sql = getSql();
       await createQueue("activity-queue");
       await send("activity-queue", { task: "test" });
 
@@ -858,7 +812,6 @@ describe("Queue Plugin", () => {
 
   describe("Schedules", () => {
     itWithDb("should create a schedule", async () => {
-      const sql = getSql();
       await createQueue("schedule-queue");
 
       const schedule = await createSchedule(
@@ -881,7 +834,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should update an existing schedule", async () => {
-      const sql = getSql();
       await createQueue("schedule-update-queue");
 
       await createSchedule("updatable", "schedule-update-queue", "0 0 * * *");
@@ -895,7 +847,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should enable/disable a schedule", async () => {
-      const sql = getSql();
       await createQueue("toggle-queue");
       await createSchedule("toggleable", "toggle-queue", "0 0 * * *");
 
@@ -909,7 +860,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should delete a schedule", async () => {
-      const sql = getSql();
       await createQueue("delete-schedule-queue");
       await createSchedule("deletable", "delete-schedule-queue", "0 0 * * *");
 
@@ -922,7 +872,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should list schedules", async () => {
-      const sql = getSql();
       await createQueue("list-schedule-queue");
       await createSchedule("schedule-1", "list-schedule-queue", "0 0 * * *");
       await createSchedule("schedule-2", "list-schedule-queue", "0 12 * * *");
@@ -934,7 +883,6 @@ describe("Queue Plugin", () => {
     itWithDb(
       "should throw error when creating schedule for non-existent queue",
       async () => {
-        const sql = getSql();
         await assert.rejects(async () => {
           await createSchedule("orphan", "non-existent-queue", "0 0 * * *");
         }, /Queue "non-existent-queue" does not exist/);
@@ -944,7 +892,6 @@ describe("Queue Plugin", () => {
 
   describe("Worker", () => {
     itWithDb("should process jobs with worker", async () => {
-      const sql = getSql();
       await createQueue("worker-queue");
 
       const processed: unknown[] = [];
@@ -975,7 +922,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should handle job failures in worker", async () => {
-      const sql = getSql();
       await createQueue("worker-fail-queue", { retryLimit: 0 });
 
       await send("worker-fail-queue", { task: "will fail" });
@@ -999,7 +945,6 @@ describe("Queue Plugin", () => {
 
   describe("Concurrent Access", () => {
     itWithDb("should handle concurrent fetches safely", async () => {
-      const sql = getSql();
       await createQueue("concurrent-queue");
 
       // Create many jobs
@@ -1025,7 +970,6 @@ describe("Queue Plugin", () => {
 
   describe("Edge Cases", () => {
     itWithDb("should handle empty data", async () => {
-      const sql = getSql();
       await createQueue("empty-data-queue");
       const result = await send("empty-data-queue", {});
 
@@ -1037,7 +981,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should handle complex nested data", async () => {
-      const sql = getSql();
       await createQueue("complex-data-queue");
 
       const complexData = {
@@ -1066,7 +1009,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should handle special characters in queue names", async () => {
-      const sql = getSql();
       await createQueue("queue-with-dashes");
       await createQueue("queue_with_underscores");
       await createQueue("queue.with.dots");
@@ -1080,7 +1022,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should handle zero retry limit", async () => {
-      const sql = getSql();
       await createQueue("zero-retry-queue", { retryLimit: 0 });
       await send("zero-retry-queue", { task: "no retries" });
 
@@ -1093,7 +1034,6 @@ describe("Queue Plugin", () => {
     });
 
     itWithDb("should handle very high priority values", async () => {
-      const sql = getSql();
       await createQueue("high-priority-queue");
 
       await send("high-priority-queue", { task: "normal" }, { priority: 0 });

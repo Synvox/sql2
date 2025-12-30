@@ -20,10 +20,10 @@ The Queue plugin provides:
 ## Installation
 
 ```typescript
-import { queuePlugin } from "sql2/plugins/queue";
+import { queuePlugin } from "sql2/queue";
 
 // Install the plugin (creates schema and functions)
-await queuePlugin(sql);
+await queuePlugin();
 ```
 
 ## Quick Start
@@ -31,9 +31,9 @@ await queuePlugin(sql);
 ### 1. Create a queue
 
 ```typescript
-import { createQueue } from "sql2/plugins/queue";
+import { createQueue } from "sql2/queue";
 
-await createQueue(sql, "email-notifications", {
+await createQueue("email-notifications", {
   retryLimit: 3,
   retryDelay: 60, // 60 seconds
   retryBackoff: true, // Exponential backoff
@@ -44,10 +44,10 @@ await createQueue(sql, "email-notifications", {
 ### 2. Send jobs
 
 ```typescript
-import { send } from "sql2/plugins/queue";
+import { send } from "sql2/queue";
 
 // Simple job
-await send(sql, "email-notifications", {
+await send("email-notifications", {
   to: "user@example.com",
   subject: "Welcome!",
   body: "Thanks for signing up.",
@@ -55,7 +55,6 @@ await send(sql, "email-notifications", {
 
 // Job with options
 await send(
-  sql,
   "email-notifications",
   { to: "user@example.com", template: "reminder" },
   {
@@ -69,17 +68,17 @@ await send(
 ### 3. Process jobs
 
 ```typescript
-import { fetch, complete, fail } from "sql2/plugins/queue";
+import { fetch, complete, fail } from "sql2/queue";
 
 // Fetch a batch of jobs
-const jobs = await fetch(sql, "email-notifications", 5);
+const jobs = await fetch("email-notifications", 5);
 
 for (const job of jobs) {
   try {
     await sendEmail(job.data);
-    await complete(sql, job.id, { sent: true });
+    await complete(job.id, { sent: true });
   } catch (error) {
-    await fail(sql, job.id, error.message);
+    await fail(job.id, error.message);
   }
 }
 ```
@@ -87,10 +86,9 @@ for (const job of jobs) {
 ### 4. Use the built-in worker (optional)
 
 ```typescript
-import { work } from "sql2/plugins/queue";
+import { work } from "sql2/queue";
 
 const worker = work(
-  sql,
   "email-notifications",
   async (job) => {
     await sendEmail(job.data);
@@ -110,7 +108,7 @@ worker.stop();
 
 ### Queue Management
 
-#### `createQueue(sql, name, options?)`
+#### `createQueue(name, options?)`
 
 Creates or updates a queue with the given configuration.
 
@@ -125,42 +123,42 @@ interface CreateQueueOptions {
   deadLetter?: string; // Dead letter queue name
 }
 
-const queue = await createQueue(sql, "my-queue", {
+const queue = await createQueue("my-queue", {
   retryLimit: 5,
   retryDelay: 30,
   deadLetter: "failed-jobs",
 });
 ```
 
-#### `getQueue(sql, name)`
+#### `getQueue(name)`
 
 Gets a queue by name with job counts.
 
 ```typescript
-const queue = await getQueue(sql, "my-queue");
+const queue = await getQueue("my-queue");
 // Returns: { name, retryLimit, ..., jobCounts: { created: 5, active: 2, ... } }
 ```
 
-#### `listQueues(sql)`
+#### `listQueues()`
 
 Lists all queues with basic job counts.
 
 ```typescript
-const queues = await listQueues(sql);
+const queues = await listQueues();
 // Returns: [{ name, createdCount, activeCount, completedCount, failedCount, ... }]
 ```
 
-#### `deleteQueue(sql, name)`
+#### `deleteQueue(name)`
 
 Deletes a queue and all its jobs.
 
 ```typescript
-const deleted = await deleteQueue(sql, "old-queue"); // true/false
+const deleted = await deleteQueue("old-queue"); // true/false
 ```
 
 ### Job Operations
 
-#### `send(sql, queueName, data, options?)`
+#### `send(queueName, data, options?)`
 
 Sends a job to a queue.
 
@@ -176,7 +174,6 @@ interface SendOptions {
 }
 
 const result = await send(
-  sql,
   "my-queue",
   { task: "process" },
   {
@@ -188,24 +185,24 @@ const result = await send(
 // Returns: { id, queueName, state, startAfter, ... } or null if singleton conflict
 ```
 
-#### `sendBatch(sql, queueName, jobs)`
+#### `sendBatch(queueName, jobs)`
 
 Sends multiple jobs efficiently.
 
 ```typescript
-const results = await sendBatch(sql, "my-queue", [
+const results = await sendBatch("my-queue", [
   { data: { n: 1 } },
   { data: { n: 2 }, options: { priority: 5 } },
   { data: { n: 3 }, options: { delay: 60 } },
 ]);
 ```
 
-#### `fetch(sql, queueName, batchSize?)`
+#### `fetch(queueName, batchSize?)`
 
 Fetches jobs for processing using `SELECT FOR UPDATE SKIP LOCKED`.
 
 ```typescript
-const jobs = await fetch(sql, "my-queue", 10);
+const jobs = await fetch("my-queue", 10);
 
 // Each job contains:
 // - id: Job UUID
@@ -216,47 +213,47 @@ const jobs = await fetch(sql, "my-queue", 10);
 
 Jobs are returned in priority order (highest first), then by creation time.
 
-#### `complete(sql, jobId, output?)`
+#### `complete(jobId, output?)`
 
 Marks a job as successfully completed.
 
 ```typescript
-const result = await complete(sql, job.id, { processedAt: new Date() });
+const result = await complete(job.id, { processedAt: new Date() });
 ```
 
-#### `fail(sql, jobId, error?)`
+#### `fail(jobId, error?)`
 
 Marks a job as failed. If retries remain, the job will be rescheduled.
 
 ```typescript
-const result = await fail(sql, job.id, "Connection timeout");
+const result = await fail(job.id, "Connection timeout");
 // Returns: { id, state, retryCount, willRetry, nextRetryAt }
 ```
 
-#### `cancel(sql, jobId)`
+#### `cancel(jobId)`
 
 Cancels a created or active job.
 
 ```typescript
-const result = await cancel(sql, job.id);
+const result = await cancel(job.id);
 // Returns: { id, cancelled, previousState }
 ```
 
-#### `getJob(sql, jobId)`
+#### `getJob(jobId)`
 
 Gets full job details by ID.
 
 ```typescript
-const job = await getJob(sql, "job-uuid");
+const job = await getJob("job-uuid");
 // Returns: { id, queueName, state, data, output, retryCount, lastError, ... }
 ```
 
-#### `listJobs(sql, queueName, options?)`
+#### `listJobs(queueName, options?)`
 
 Lists jobs in a queue with optional filtering.
 
 ```typescript
-const jobs = await listJobs(sql, "my-queue", {
+const jobs = await listJobs("my-queue", {
   state: "failed",
   limit: 50,
   offset: 0,
@@ -265,68 +262,67 @@ const jobs = await listJobs(sql, "my-queue", {
 
 ### Maintenance
 
-#### `expireJobs(sql)`
+#### `expireJobs()`
 
 Expires active jobs that have exceeded their timeout. Run periodically.
 
 ```typescript
-const results = await expireJobs(sql);
+const results = await expireJobs();
 // Returns: [{ queueName, expiredCount }]
 ```
 
-#### `cleanup(sql)`
+#### `cleanup()`
 
 Removes old completed/failed jobs based on retention settings. Run periodically.
 
 ```typescript
-const results = await cleanup(sql);
+const results = await cleanup();
 // Returns: [{ queueName, deletedCount }]
 ```
 
-#### `purge(sql, queueName, state?)`
+#### `purge(queueName, state?)`
 
 Removes all jobs from a queue (optionally filtered by state).
 
 ```typescript
 // Purge all jobs
-const count = await purge(sql, "my-queue");
+const count = await purge("my-queue");
 
 // Purge only completed jobs
-const count = await purge(sql, "my-queue", "completed");
+const count = await purge("my-queue", "completed");
 ```
 
 ### Statistics
 
-#### `getStats(sql, queueName?)`
+#### `getStats(queueName?)`
 
 Gets job statistics for a queue or all queues.
 
 ```typescript
-const stats = await getStats(sql, "my-queue");
+const stats = await getStats("my-queue");
 // Returns: [{
 //   queueName, created, active, completed, failed, expired, cancelled,
 //   oldestJobAge, avgCompletionTime
 // }]
 ```
 
-#### `getActivity(sql, queueName?, minutes?)`
+#### `getActivity(queueName?, minutes?)`
 
 Gets per-minute job activity for monitoring dashboards.
 
 ```typescript
-const activity = await getActivity(sql, "my-queue", 60);
+const activity = await getActivity("my-queue", 60);
 // Returns: [{ queueName, timeBucket, jobsCreated, jobsCompleted, jobsFailed }]
 ```
 
 ### Schedules
 
-#### `createSchedule(sql, name, queueName, cron, options?)`
+#### `createSchedule(name, queueName, cron, options?)`
 
 Creates a schedule for recurring jobs. Note: You'll need a separate scheduler to check and create jobs based on these schedules.
 
 ```typescript
 const schedule = await createSchedule(
-  sql,
   "daily-cleanup",
   "maintenance",
   "0 0 * * *", // Midnight daily
@@ -338,28 +334,28 @@ const schedule = await createSchedule(
 );
 ```
 
-#### `setScheduleEnabled(sql, name, enabled)`
+#### `setScheduleEnabled(name, enabled)`
 
 Enables or disables a schedule.
 
 ```typescript
-await setScheduleEnabled(sql, "daily-cleanup", false);
+await setScheduleEnabled("daily-cleanup", false);
 ```
 
-#### `listSchedules(sql, queueName?)`
+#### `listSchedules(queueName?)`
 
 Lists all schedules.
 
 ```typescript
-const schedules = await listSchedules(sql);
+const schedules = await listSchedules();
 ```
 
-#### `deleteSchedule(sql, name)`
+#### `deleteSchedule(name)`
 
 Deletes a schedule.
 
 ```typescript
-await deleteSchedule(sql, "old-schedule");
+await deleteSchedule("old-schedule");
 ```
 
 ## Job States
@@ -436,14 +432,14 @@ import {
   fail,
   expireJobs,
   cleanup,
-} from "sql2/plugins/queue";
+} from "sql2/queue";
 
 // Initialize
-await queuePlugin(sql);
+await queuePlugin();
 
 // Create queue with dead letter
-await createQueue(sql, "dlq");
-await createQueue(sql, "tasks", {
+await createQueue("dlq");
+await createQueue("tasks", {
   retryLimit: 3,
   retryDelay: 60,
   expireIn: 300,
@@ -451,12 +447,12 @@ await createQueue(sql, "tasks", {
 });
 
 // Producer: send jobs
-await send(sql, "tasks", { action: "process", id: 123 });
+await send("tasks", { action: "process", id: 123 });
 
 // Consumer: process jobs
 async function processJobs() {
   while (true) {
-    const jobs = await fetch(sql, "tasks", 5);
+    const jobs = await fetch("tasks", 5);
 
     if (jobs.length === 0) {
       await new Promise((r) => setTimeout(r, 1000));
@@ -467,9 +463,9 @@ async function processJobs() {
       jobs.map(async (job) => {
         try {
           const result = await processTask(job.data);
-          await complete(sql, job.id, result);
+          await complete(job.id, result);
         } catch (error) {
-          await fail(sql, job.id, error.message);
+          await fail(job.id, error.message);
         }
       }),
     );
@@ -479,10 +475,10 @@ async function processJobs() {
 // Maintenance: run periodically
 async function maintenance() {
   // Expire stale jobs (every minute)
-  await expireJobs(sql);
+  await expireJobs();
 
   // Clean up old jobs (every hour)
-  await cleanup(sql);
+  await cleanup();
 }
 
 setInterval(maintenance, 60000);

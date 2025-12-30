@@ -1,4 +1,4 @@
-# SQL Migrations Plugin
+# Migrations Plugin
 
 A simple, forward-only migration system for PostgreSQL inspired by Knex migrations. Unlike Knex, this plugin intentionally omits "down" migrations—once applied, migrations are permanent. This design encourages careful migration planning and aligns with production best practices where rollbacks are handled through new forward migrations.
 
@@ -13,8 +13,11 @@ A simple, forward-only migration system for PostgreSQL inspired by Knex migratio
 
 ## Installation
 
-```bash
-npm install sql2
+```typescript
+import { migrationsPlugin } from "sql2/migrations";
+
+// Install migrations schema (run once)
+await migrationsPlugin();
 ```
 
 ## Quick Start
@@ -25,7 +28,6 @@ Organize migrations as individual files in a `migrations/` directory:
 
 ```
 src/
-├── db.ts
 ├── migrations/
 │   ├── 20240101_000000_create_users.ts
 │   ├── 20240101_000001_create_posts.ts
@@ -39,9 +41,11 @@ Each migration file exports an `up` function:
 
 ```typescript
 // src/migrations/20240101_000000_create_users.ts
-import type { sql } from "../db.ts";
+import { getSql } from "sql2";
 
-export async function up(sql: typeof sql) {
+export async function up() {
+  const sql = getSql();
+
   await sql`
     create table users (
       id SERIAL primary key,
@@ -54,9 +58,11 @@ export async function up(sql: typeof sql) {
 
 ```typescript
 // src/migrations/20240101_000001_create_posts.ts
-import type { sql } from "../db.ts";
+import { getSql } from "sql2";
 
-export async function up(sql: typeof sql) {
+export async function up() {
+  const sql = getSql();
+
   await sql`
     create table posts (
       id SERIAL primary key,
@@ -76,16 +82,15 @@ Import your migrations dynamically and run them:
 ```typescript
 // src/migrate.ts
 import { migrationsPlugin, runMigrations } from "sql2/migrations";
-import { sql } from "./db.ts";
 
 // Install migrations schema (run once)
-await migrationsPlugin(sql);
+await migrationsPlugin();
 
-async function importMigration(name) {
+async function importMigration(name: string) {
   return {
     name,
-    ...(await import(`./migrations/${name}.ts`))
-  }
+    ...(await import(`./migrations/${name}.ts`)),
+  };
 }
 
 // Import migrations in order
@@ -96,32 +101,10 @@ const migrations = [
 ];
 
 // Run pending migrations
-const result = await runMigrations(sql, migrations);
+const result = await runMigrations(migrations);
 console.log(
   `Applied ${result.applied.length} migrations in batch ${result.batch}`,
 );
-```
-
-### Database Setup
-
-```typescript
-// src/db.ts
-import { PGlite } from "@electric-sql/pglite";
-import { QueryableStatement, type Interpolable } from "sql2";
-
-const db = new PGlite();
-
-export class PGliteStatement extends QueryableStatement {
-  async exec() {
-    await db.exec(this.compile());
-  }
-  async query<T>(): Promise<{ rows: T[] }> {
-    return db.query(this.compile(), this.values);
-  }
-}
-
-export const sql = (strings: TemplateStringsArray, ...values: Interpolable[]) =>
-  new PGliteStatement(strings, values);
 ```
 
 ## Schema
@@ -154,29 +137,28 @@ Prevents concurrent migration runs.
 
 ### Plugin Installation
 
-#### `migrationsPlugin(sql)`
+#### `migrationsPlugin()`
 
 Installs the migrations schema and helper functions. Call once before using migrations.
 
 ```typescript
-await migrationsPlugin(sql);
+await migrationsPlugin();
 ```
 
 ### Running Migrations
 
-#### `runMigrations(sql, migrations, lockerName?)`
+#### `runMigrations(migrations, lockerName?)`
 
 Runs all pending migrations in order.
 
 ```typescript
-const result = await runMigrations(sql, migrations, "my-app");
+const result = await runMigrations(migrations, "my-app");
 // result: { applied: string[], batch: number }
 ```
 
 **Parameters:**
 
-- `sql` - The sql tagged template function
-- `migrations` - Array of migration objects
+- `migrations` - Array of migration objects with `name` and `up` function
 - `lockerName` - Optional identifier for the running process (default: "sql2-migrations")
 
 **Returns:**
@@ -190,36 +172,36 @@ const result = await runMigrations(sql, migrations, "my-app");
 
 ### Migration Status
 
-#### `getMigrationStatus(sql, migrations)`
+#### `getMigrationStatus(migrations)`
 
 Gets the status of all migrations.
 
 ```typescript
-const status = await getMigrationStatus(sql, migrations);
+const status = await getMigrationStatus(migrations);
 // status: {
-//   applied: [{ name, batch, migration_time }],
+//   applied: [{ name, batch, migrationTime }],
 //   pending: string[],
-//   stats: { total_migrations, total_batches, last_migration_name, last_migration_time, last_batch }
+//   stats: { totalMigrations, totalBatches, lastMigrationName, lastMigrationTime, lastBatch }
 // }
 ```
 
 ### Lock Management
 
-#### `getLockStatus(sql)`
+#### `getLockStatus()`
 
 Checks the current lock status.
 
 ```typescript
-const lock = await getLockStatus(sql);
-// lock: { is_locked: boolean, locked_at: Date | null, locked_by: string | null }
+const lock = await getLockStatus();
+// lock: { isLocked: boolean, lockedAt: Date | null, lockedBy: string | null }
 ```
 
-#### `forceReleaseLock(sql)`
+#### `forceReleaseLock()`
 
 Forcefully releases the migration lock. Use with caution—only when you're certain no migration is running.
 
 ```typescript
-await forceReleaseLock(sql);
+await forceReleaseLock();
 ```
 
 ## SQL Functions
@@ -269,12 +251,12 @@ select
 from
   migrations.record_migration ('migration_name');
 
+-- Record with specific batch
 select
   *
 from
   migrations.record_migration ('migration_name', 5);
 
--- specific batch
 -- Check if migration exists
 select
   migrations.has_migration ('migration_name');
@@ -356,9 +338,11 @@ Need to undo something? Create a new migration that reverses the change:
 
 ```typescript
 // src/migrations/20240201_000000_drop_user_nickname.ts
-import type { sql } from "../db.ts";
+import { getSql } from "sql2";
 
-export async function up(sql: typeof sql) {
+export async function up() {
+  const sql = getSql();
+
   await sql`
     alter table users
     drop column nickname
@@ -377,15 +361,14 @@ import {
   runMigrations,
   getMigrationStatus,
 } from "sql2/migrations";
-import { sql } from "./db.ts";
 
-await migrationsPlugin(sql);
+await migrationsPlugin();
 
-async function importMigration(name) {
+async function importMigration(name: string) {
   return {
     name,
-    ...(await import(`./migrations/${name}.ts`))
-  }
+    ...(await import(`./migrations/${name}.ts`)),
+  };
 }
 
 // Add new migrations to this array as you create them
@@ -403,7 +386,7 @@ const migrations = [
 ];
 
 // Run any pending migrations
-const result = await runMigrations(sql, migrations);
+const result = await runMigrations(migrations);
 
 if (result.applied.length > 0) {
   console.log(
@@ -415,24 +398,26 @@ if (result.applied.length > 0) {
 }
 
 // Check overall status
-const status = await getMigrationStatus(sql, migrations);
+const status = await getMigrationStatus(migrations);
 console.log(
-  `\nTotal: ${status.stats.total_migrations} migrations across ${status.stats.total_batches} batches`,
+  `\nTotal: ${status.stats.totalMigrations} migrations across ${status.stats.totalBatches} batches`,
 );
 ```
 
 ## Error Handling
 
 ```typescript
+import { getLockStatus } from "sql2/migrations";
+
 try {
-  await runMigrations(sql, migrations);
+  await runMigrations(migrations);
 } catch (error) {
   if (error.message.includes("Could not acquire migration lock")) {
     console.log("Another migration is in progress, please wait...");
 
     // Check who has the lock
-    const lock = await getLockStatus(sql);
-    console.log(`Lock held by: ${lock.locked_by} since ${lock.locked_at}`);
+    const lock = await getLockStatus();
+    console.log(`Lock held by: ${lock.lockedBy} since ${lock.lockedAt}`);
   } else {
     // Migration failed - lock is automatically released
     console.error("Migration failed:", error);
@@ -443,7 +428,7 @@ try {
 ## Architecture
 
 - **Pure PostgreSQL**: All state stored in standard database tables
-- **Idempotent setup**: `migrationsPlugin` can be called multiple times safely
+- **Idempotent setup**: `migrationsPlugin()` can be called multiple times safely
 - **Advisory locking**: Uses table-level locking for safety
 - **Automatic cleanup**: Lock is always released, even on failure
 - **Stale lock recovery**: Locks older than 30 minutes can be acquired by new processes

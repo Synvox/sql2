@@ -18,9 +18,9 @@ The Events plugin provides a complete event store for building event-sourced app
 ## Installation
 
 ```typescript
-import { eventsPlugin } from "sql2/plugins/events";
+import { eventsPlugin } from "sql2/events";
 
-await eventsPlugin(sql);
+await eventsPlugin();
 ```
 
 ## Quick Start
@@ -30,20 +30,20 @@ await eventsPlugin(sql);
 Before appending events, register the categories and event types you'll use. Event types use a `category/type` format:
 
 ```typescript
-import { registerCategory, registerEventType } from "sql2/plugins/events";
+import { registerCategory, registerEventType } from "sql2/events";
 
 // Register categories (kebab-case by convention)
-await registerCategory(sql, "order");
-await registerCategory(sql, "user");
+await registerCategory("order");
+await registerCategory("user");
 
 // Register event types using "category/type" format
-await registerEventType(sql, "order/created");
-await registerEventType(sql, "order/item-added");
-await registerEventType(sql, "order/shipped");
-await registerEventType(sql, "order/cancelled");
+await registerEventType("order/created");
+await registerEventType("order/item-added");
+await registerEventType("order/shipped");
+await registerEventType("order/cancelled");
 
-await registerEventType(sql, "user/created");
-await registerEventType(sql, "user/email-verified");
+await registerEventType("user/created");
+await registerEventType("user/email-verified");
 ```
 
 ### 2. Append Events
@@ -51,17 +51,16 @@ await registerEventType(sql, "user/email-verified");
 Events are appended using the `category/type` format, making the category explicit:
 
 ```typescript
-import { append } from "sql2/plugins/events";
+import { append } from "sql2/events";
 import { randomUUID } from "crypto";
 
 const orderId = randomUUID();
 
 // Append a single event (format: "category/type")
-await append(sql, "order/created", orderId, { customer_id: "cust-1" });
+await append("order/created", orderId, { customer_id: "cust-1" });
 
 // Append with optimistic concurrency
 await append(
-  sql,
   "order/item-added",
   orderId,
   { sku: "widget", qty: 2, price: 29.99 },
@@ -70,14 +69,12 @@ await append(
 
 // Append more events
 await append(
-  sql,
   "order/item-added",
   orderId,
   { sku: "gadget", qty: 1, price: 49.99 },
   { expectedVersion: 2 },
 );
 await append(
-  sql,
   "order/shipped",
   orderId,
   { carrier: "FedEx" },
@@ -90,9 +87,15 @@ await append(
 Projections transform events into read models. Use **sync handlers** (SQL) for critical updates and **async handlers** (functions) for side effects:
 
 ```typescript
-import { registerProjection, startProjections } from "sql2/plugins/events";
+import {
+  registerProjection,
+  startProjections,
+} from "sql2/events";
+import { getSql } from "sql2";
 
-await registerProjection(sql, "order-processing", {
+const sql = getSql();
+
+await registerProjection("order-processing", {
   handlers: {
     // SYNC: Runs in same transaction as append
     // Handler keys use "category/type" format
@@ -117,14 +120,14 @@ await registerProjection(sql, "order-processing", {
     `,
 
     // ASYNC: Runs after commit via polling
-    "order/shipped": async (event, sql) => {
+    "order/shipped": async (event) => {
       await sendShippingNotification(event.streamId);
     },
   },
 });
 
 // Start async handler processing
-const runner = startProjections(sql);
+const runner = startProjections();
 
 // Graceful shutdown
 runner.stop();
@@ -138,9 +141,12 @@ Register aggregates to compute state directly in PostgreSQL. State is returned a
 import {
   registerAggregate,
   loadRegisteredAggregate,
-} from "sql2/plugins/events";
+} from "sql2/events";
+import { getSql } from "sql2";
 
-await registerAggregate(sql, "order", {
+const sql = getSql();
+
+await registerAggregate("order", {
   categoryId: "order",
   initialState: { customer_id: "", total: 0, status: "pending" },
   reducers: {
@@ -164,7 +170,7 @@ await registerAggregate(sql, "order", {
 });
 
 // Load aggregate state (computed in PostgreSQL!)
-const order = await loadRegisteredAggregate(sql, "order", orderId);
+const order = await loadRegisteredAggregate("order", orderId);
 // { stream_id: "550e8400-...", version: 4, customer_id: "cust-1", total: 109.97, status: "shipped" }
 ```
 
@@ -179,17 +185,17 @@ import {
   registerCategory,
   unregisterCategory,
   listCategories,
-} from "sql2/plugins/events";
+} from "sql2/events";
 
 // Register a category
-await registerCategory(sql, "order");
+await registerCategory("order");
 
 // List all categories
-const categories = await listCategories(sql);
+const categories = await listCategories();
 // ["order", "user", ...]
 
 // Unregister (cascades to types and events)
-await unregisterCategory(sql, "order");
+await unregisterCategory("order");
 ```
 
 ### Registering Event Types
@@ -199,22 +205,22 @@ import {
   registerEventType,
   unregisterEventType,
   listEventTypes,
-} from "sql2/plugins/events";
+} from "sql2/events";
 
 // Register event types using "category/type" format
-await registerEventType(sql, "order/created");
-await registerEventType(sql, "order/item-added");
-await registerEventType(sql, "order/shipped");
+await registerEventType("order/created");
+await registerEventType("order/item-added");
+await registerEventType("order/shipped");
 
 // List types for a category
-const orderTypes = await listEventTypes(sql, "order");
+const orderTypes = await listEventTypes("order");
 // [{ categoryId: "order", id: "created" }, { categoryId: "order", id: "shipped" }, ...]
 
 // List all types
-const allTypes = await listEventTypes(sql);
+const allTypes = await listEventTypes();
 
 // Unregister a type
-await unregisterEventType(sql, "order/cancelled");
+await unregisterEventType("order/cancelled");
 ```
 
 ### Naming Convention
@@ -244,7 +250,11 @@ Projections are the primary way to build read models from events. The plugin sup
 Sync handlers run inside the same transaction as the append. If they fail, the append rolls back.
 
 ```typescript
-await registerProjection(sql, "inventory", {
+import { getSql } from "sql2";
+
+const sql = getSql();
+
+await registerProjection("inventory", {
   handlers: {
     "order/item-added": sql`
       update inventory
@@ -283,17 +293,10 @@ await registerProjection(sql, "inventory", {
 Async handlers run after the transaction commits, via subscription polling. They're ideal for side effects.
 
 ```typescript
-await registerProjection(sql, "notifications", {
+await registerProjection("notifications", {
   handlers: {
-    "order/shipped": async (event, sql) => {
-      const customer = await sql`
-        select
-          email
-        from
-          customers
-        where
-          id = ${event.data.customer_id}
-      `.first();
+    "order/shipped": async (event) => {
+      const customer = await getCustomer(event.data.customer_id);
       await sendEmail(customer.email, "Your order shipped!");
     },
     "order/delivered": async (event) => {
@@ -303,7 +306,7 @@ await registerProjection(sql, "notifications", {
 });
 
 // Start processing
-const runner = startProjections(sql, {
+const runner = startProjections({
   pollingInterval: 1000,
   onError: (err, event) => console.error(`Failed: ${event.id}`, err),
 });
@@ -314,7 +317,11 @@ const runner = startProjections(sql, {
 Combine sync and async handlers in one projection:
 
 ```typescript
-await registerProjection(sql, "order-processing", {
+import { getSql } from "sql2";
+
+const sql = getSql();
+
+await registerProjection("order-processing", {
   handlers: {
     // Sync: update read model immediately
     "order/created": sql`
@@ -339,14 +346,14 @@ await registerProjection(sql, "order-processing", {
 ### Managing Projections
 
 ```typescript
-import { listProjections, unregisterProjection } from "sql2/plugins/events";
+import { listProjections, unregisterProjection } from "sql2/events";
 
 // List all projections
-const projections = await listProjections(sql);
+const projections = await listProjections();
 // [{ name, syncTypes, asyncTypes, eventsBehind, triggerName, subscriptionName }]
 
 // Unregister (removes trigger and subscription)
-await unregisterProjection(sql, "order-processing");
+await unregisterProjection("order-processing");
 ```
 
 ## Aggregates
@@ -356,9 +363,12 @@ Aggregates compute state from events. Register them to create PostgreSQL functio
 ### Registering Aggregates
 
 ```typescript
-import { registerAggregate } from "sql2/plugins/events";
+import { registerAggregate } from "sql2/events";
+import { getSql } from "sql2";
 
-await registerAggregate(sql, "cart", {
+const sql = getSql();
+
+await registerAggregate("cart", {
   categoryId: "cart",
   initialState: { items: 0, subtotal: 0, discount: 0, total: 0 },
   reducers: {
@@ -388,10 +398,13 @@ await registerAggregate(sql, "cart", {
 ### Loading Aggregates
 
 ```typescript
-import { loadRegisteredAggregate } from "sql2/plugins/events";
+import { loadRegisteredAggregate } from "sql2/events";
+import { getSql } from "sql2";
+
+const sql = getSql();
 
 // Load via TypeScript helper
-const cart = await loadRegisteredAggregate(sql, "cart", cartId);
+const cart = await loadRegisteredAggregate("cart", cartId);
 
 // Or call the generated SQL function directly
 const result = await sql`
@@ -419,7 +432,7 @@ Since aggregates return JSONB, access state fields using JSONB operators:
 For complex logic, use TypeScript reducers instead:
 
 ```typescript
-import { loadAggregate, saveSnapshot } from "sql2/plugins/events";
+import { loadAggregate, saveSnapshot } from "sql2/events";
 
 const reducer = (state, event) => {
   switch (event.typeId) {
@@ -444,14 +457,13 @@ const reducer = (state, event) => {
 const initialState = { customerId: "", total: 0, status: "draft" };
 
 const { state, version } = await loadAggregate(
-  sql,
   orderId,
   reducer,
   initialState,
 );
 
 // Optionally save a snapshot for faster loading
-await saveSnapshot(sql, orderId, state, version);
+await saveSnapshot(orderId, version, state);
 ```
 
 ## Reading Events
@@ -459,13 +471,13 @@ await saveSnapshot(sql, orderId, state, version);
 ### Read a Stream
 
 ```typescript
-import { readStream } from "sql2/plugins/events";
+import { readStream } from "sql2/events";
 
 // Read all events for a stream
-const events = await readStream(sql, orderId);
+const events = await readStream(orderId);
 
 // With options
-const events = await readStream(sql, orderId, {
+const events = await readStream(orderId, {
   fromVersion: 5,
   limit: 100,
   direction: "backward",
@@ -475,9 +487,9 @@ const events = await readStream(sql, orderId, {
 ### Read All Events
 
 ```typescript
-import { readAll } from "sql2/plugins/events";
+import { readAll } from "sql2/events";
 
-const events = await readAll(sql, {
+const events = await readAll({
   fromPosition: 0,
   limit: 1000,
   filterTypes: ["order/created", "order/shipped"],
@@ -487,13 +499,13 @@ const events = await readAll(sql, {
 ### Read by Category or Type
 
 ```typescript
-import { readByCategory, readByType } from "sql2/plugins/events";
+import { readByCategory, readByType } from "sql2/events";
 
 // All events in a category
-const orderEvents = await readByCategory(sql, "order");
+const orderEvents = await readByCategory("order");
 
 // Events of a specific type (using "category/type" format)
-const shippedEvents = await readByType(sql, "order/shipped");
+const shippedEvents = await readByType("order/shipped");
 ```
 
 ## Subscriptions
@@ -507,20 +519,20 @@ import {
   createSubscription,
   poll,
   ack,
-} from "sql2/plugins/events";
+} from "sql2/events";
 
 // Create a subscription (use "category/type" format)
-const sub = await createSubscription(sql, "order-processor", {
+const sub = await createSubscription("order-processor", {
   filterTypes: ["order/created", "order/shipped"],
 });
 
 // Poll for new events (safe for concurrent workers)
-const events = await poll(sql, "order-processor", 100);
+const events = await poll("order-processor", 100);
 
 // Process and acknowledge each event
 for (const event of events) {
   await processEvent(event);
-  await ack(sql, "order-processor", event.position);
+  await ack("order-processor", event.position);
 }
 ```
 
@@ -530,16 +542,17 @@ Multiple workers can safely poll the same subscription:
 
 ```typescript
 // Worker 1, 2, 3... can all run concurrently
-const events = await poll(sql, "order-processor", 10, 300); // 300s claim timeout
+const events = await poll("order-processor", 10, 300); // 300s claim timeout
 
 for (const event of events) {
   // Each event is claimed exclusively by this worker
   await processEvent(event);
-  await ack(sql, "order-processor", event.position);
+  await ack("order-processor", event.position);
 }
 ```
 
 This ensures:
+
 - Each event is processed by only one worker
 - Workers don't block each other
 - No events are lost or duplicated
@@ -549,13 +562,16 @@ This ensures:
 Event claims automatically expire, but you can manually clean them up:
 
 ```typescript
-import { cleanupExpiredClaims, cleanupSubscriptionClaims } from "sql2/plugins/events";
+import {
+  cleanupExpiredClaims,
+  cleanupSubscriptionClaims,
+} from "sql2/events";
 
 // Clean up all expired claims (run periodically)
-const removed = await cleanupExpiredClaims(sql);
+const removed = await cleanupExpiredClaims();
 
 // Clean up all claims for a specific subscription (e.g., when a worker crashes)
-await cleanupSubscriptionClaims(sql, "order-processor");
+await cleanupSubscriptionClaims("order-processor");
 ```
 
 ## Snapshots
@@ -566,18 +582,18 @@ Save and load snapshots for faster aggregate loading:
 import {
   saveSnapshot,
   loadSnapshot,
-  deleteSnapshots,
-} from "sql2/plugins/events";
+  deleteSnapshot,
+} from "sql2/events";
 
 // Save a snapshot
-await saveSnapshot(sql, orderId, currentState, version);
+await saveSnapshot(orderId, version, currentState);
 
 // Load latest snapshot
-const snapshot = await loadSnapshot(sql, orderId);
+const snapshot = await loadSnapshot(orderId);
 // { streamId, version, state, createdAt }
 
-// Delete old snapshots (keep latest)
-await deleteSnapshots(sql, orderId, { keepVersions: [version] });
+// Delete a snapshot
+await deleteSnapshot(orderId);
 ```
 
 ## Statistics
@@ -588,22 +604,22 @@ import {
   getStreamStats,
   getTypeStats,
   getCategoryStats,
-} from "sql2/plugins/events";
+} from "sql2/events";
 
 // Global statistics
-const stats = await getStats(sql);
+const stats = await getStats();
 // { totalEvents, totalStreams, totalSubscriptions, maxPosition }
 
 // Per-stream statistics
-const streamStats = await getStreamStats(sql, orderId);
+const streamStats = await getStreamStats(orderId);
 // [{ streamId, category, eventCount, version, createdAt, updatedAt }]
 
 // Type statistics
-const typeStats = await getTypeStats(sql);
+const typeStats = await getTypeStats();
 // [{ type, count, firstSeen, lastSeen }]
 
 // Category statistics
-const catStats = await getCategoryStats(sql);
+const catStats = await getCategoryStats();
 // [{ category, streamCount, eventCount, firstSeen, lastSeen }]
 ```
 
@@ -611,59 +627,59 @@ const catStats = await getCategoryStats(sql);
 
 ### Core Functions
 
-| Function                                           | Description                                    |
-| -------------------------------------------------- | ---------------------------------------------- |
-| `eventsPlugin(sql)`                                | Initialize the events schema                   |
-| `append(sql, eventType, streamId, data, options?)` | Append event (`eventType` = `"category/type"`) |
-| `readStream(sql, streamId, options?)`              | Read stream events                             |
-| `readAll(sql, options?)`                           | Read all events                                |
-| `readByCategory(sql, category, options?)`          | Read by category                               |
-| `readByType(sql, eventType, options?)`             | Read by type (`eventType` = `"category/type"`) |
+| Function                                      | Description                                    |
+| --------------------------------------------- | ---------------------------------------------- |
+| `eventsPlugin()`                              | Initialize the events schema                   |
+| `append(eventType, streamId, data, options?)` | Append event (`eventType` = `"category/type"`) |
+| `readStream(streamId, options?)`              | Read stream events                             |
+| `readAll(options?)`                           | Read all events                                |
+| `readByCategory(category, options?)`          | Read by category                               |
+| `readByType(eventType, options?)`             | Read by type (`eventType` = `"category/type"`) |
 
 ### Category & Type Registration
 
-| Function                              | Description                                             |
-| ------------------------------------- | ------------------------------------------------------- |
-| `registerCategory(sql, id)`           | Register a category                                     |
-| `unregisterCategory(sql, id)`         | Unregister a category                                   |
-| `listCategories(sql)`                 | List all categories                                     |
-| `registerEventType(sql, eventType)`   | Register event type (`eventType` = `"category/type"`)   |
-| `unregisterEventType(sql, eventType)` | Unregister event type (`eventType` = `"category/type"`) |
-| `listEventTypes(sql, category?)`      | List event types                                        |
+| Function                         | Description                                             |
+| -------------------------------- | ------------------------------------------------------- |
+| `registerCategory(id)`           | Register a category                                     |
+| `unregisterCategory(id)`         | Unregister a category                                   |
+| `listCategories()`               | List all categories                                     |
+| `registerEventType(eventType)`   | Register event type (`eventType` = `"category/type"`)   |
+| `unregisterEventType(eventType)` | Unregister event type (`eventType` = `"category/type"`) |
+| `listEventTypes(category?)`      | List event types                                        |
 
 ### Projections
 
-| Function                                 | Description                |
-| ---------------------------------------- | -------------------------- |
-| `registerProjection(sql, name, options)` | Register hybrid projection |
-| `unregisterProjection(sql, name)`        | Unregister projection      |
-| `listProjections(sql)`                   | List all projections       |
-| `startProjections(sql, options?)`        | Start async processing     |
-| `getProjectionHandlers(name)`            | Get async handlers         |
+| Function                            | Description                |
+| ----------------------------------- | -------------------------- |
+| `registerProjection(name, options)` | Register hybrid projection |
+| `unregisterProjection(name)`        | Unregister projection      |
+| `listProjections()`                 | List all projections       |
+| `startProjections(options?)`        | Start async processing     |
+| `getProjectionHandlers(name)`       | Get async handlers         |
 
 ### Aggregates
 
-| Function                                         | Description                |
-| ------------------------------------------------ | -------------------------- |
-| `registerAggregate(sql, name, options)`          | Register SQL aggregate     |
-| `unregisterAggregate(sql, name)`                 | Unregister aggregate       |
-| `listAggregates(sql)`                            | List registered aggregates |
-| `loadRegisteredAggregate(sql, name, streamId)`   | Load via SQL function      |
-| `loadAggregate(sql, streamId, reducer, initial)` | Load via TS reducer        |
+| Function                                    | Description                |
+| ------------------------------------------- | -------------------------- |
+| `registerAggregate(name, options)`          | Register SQL aggregate     |
+| `unregisterAggregate(name)`                 | Unregister aggregate       |
+| `listAggregates()`                          | List registered aggregates |
+| `loadRegisteredAggregate(name, streamId)`   | Load via SQL function      |
+| `loadAggregate(streamId, reducer, initial)` | Load via TS reducer        |
 
 ### Subscriptions
 
-| Function                                  | Description         |
-| ----------------------------------------- | ------------------- |
-| `createSubscription(sql, name, options?)` | Create subscription |
-| `deleteSubscription(sql, name)`           | Delete subscription |
-| `pollSubscription(sql, name, options?)`   | Poll for events     |
-| `acknowledgeEvents(sql, name, position)`  | Acknowledge events  |
+| Function                             | Description         |
+| ------------------------------------ | ------------------- |
+| `createSubscription(name, options?)` | Create subscription |
+| `deleteSubscription(name)`           | Delete subscription |
+| `poll(name, batchSize?, timeout?)`   | Poll for events     |
+| `ack(name, position)`                | Acknowledge events  |
 
 ### Snapshots
 
-| Function                                      | Description          |
-| --------------------------------------------- | -------------------- |
-| `saveSnapshot(sql, streamId, state, version)` | Save snapshot        |
-| `loadSnapshot(sql, streamId)`                 | Load latest snapshot |
-| `deleteSnapshots(sql, streamId, options?)`    | Delete snapshots     |
+| Function                                 | Description          |
+| ---------------------------------------- | -------------------- |
+| `saveSnapshot(streamId, version, state)` | Save snapshot        |
+| `loadSnapshot(streamId)`                 | Load latest snapshot |
+| `deleteSnapshot(streamId)`               | Delete snapshot      |

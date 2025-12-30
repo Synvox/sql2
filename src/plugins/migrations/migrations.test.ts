@@ -112,9 +112,9 @@ describe("Migrations Plugin", () => {
 
       const lockStatus = await getLockStatus();
 
-      assert.strictEqual(lockStatus.is_locked, false);
-      assert.strictEqual(lockStatus.locked_at, null);
-      assert.strictEqual(lockStatus.locked_by, null);
+      assert.strictEqual(lockStatus.isLocked, false);
+      assert.strictEqual(lockStatus.lockedAt, null);
+      assert.strictEqual(lockStatus.lockedBy, null);
     });
 
     itWithDb("is idempotent - can be called multiple times", async () => {
@@ -126,7 +126,7 @@ describe("Migrations Plugin", () => {
 
       // Should still work fine
       const lockStatus = await getLockStatus();
-      assert.strictEqual(typeof lockStatus.is_locked, "boolean");
+      assert.strictEqual(typeof lockStatus.isLocked, "boolean");
     });
   });
 
@@ -177,14 +177,14 @@ describe("Migrations Plugin", () => {
 
       // Verify locked
       let status = await getLockStatus();
-      assert.strictEqual(status.is_locked, true);
+      assert.strictEqual(status.isLocked, true);
 
       // Release
       await forceReleaseLock();
 
       // Verify unlocked
       status = await getLockStatus();
-      assert.strictEqual(status.is_locked, false);
+      assert.strictEqual(status.isLocked, false);
     });
 
     itWithDb("getLockStatus returns correct lock info", async () => {
@@ -198,9 +198,9 @@ describe("Migrations Plugin", () => {
 
       const status = await getLockStatus();
 
-      assert.strictEqual(status.is_locked, true);
-      assert.strictEqual(status.locked_by, "my-test-process");
-      assert.ok(status.locked_at instanceof Date);
+      assert.strictEqual(status.isLocked, true);
+      assert.strictEqual(status.lockedBy, "my-test-process");
+      assert.ok(status.lockedAt instanceof Date);
 
       // Clean up
       await forceReleaseLock();
@@ -219,7 +219,7 @@ describe("Migrations Plugin", () => {
       await forceReleaseLock();
 
       const status = await getLockStatus();
-      assert.strictEqual(status.is_locked, false);
+      assert.strictEqual(status.isLocked, false);
     });
 
     itWithDb("is_locked function returns correct status", async () => {
@@ -425,7 +425,7 @@ describe("Migrations Plugin", () => {
             const sql = getSql({ camelize: false });
             // Check locker name during migration
             const status = await getLockStatus();
-            assert.strictEqual(status.locked_by, "custom-locker");
+            assert.strictEqual(status.lockedBy, "custom-locker");
 
             await sql`
               create table if not exists locker_name_test (id SERIAL primary key)
@@ -455,7 +455,7 @@ describe("Migrations Plugin", () => {
       await runMigrations(migrations);
 
       const status = await getLockStatus();
-      assert.strictEqual(status.is_locked, false);
+      assert.strictEqual(status.isLocked, false);
     });
 
     itWithDb("releases lock after failed migration", async () => {
@@ -480,7 +480,7 @@ describe("Migrations Plugin", () => {
 
       // Lock should be released
       const status = await getLockStatus();
-      assert.strictEqual(status.is_locked, false);
+      assert.strictEqual(status.isLocked, false);
     });
 
     itWithDb("throws when lock cannot be acquired", async () => {
@@ -767,10 +767,10 @@ describe("Migrations Plugin", () => {
       assert.strictEqual(status.applied.length, 0);
       assert.strictEqual(status.pending.length, 1);
       assert.strictEqual(status.pending[0], "20240101_000001_pending");
-      assert.strictEqual(status.stats.total_migrations, 0);
-      assert.strictEqual(status.stats.total_batches, 0);
-      assert.strictEqual(status.stats.last_migration_name, null);
-      assert.strictEqual(status.stats.last_batch, 0);
+      assert.strictEqual(status.stats.totalMigrations, 0);
+      assert.strictEqual(status.stats.totalBatches, 0);
+      assert.strictEqual(status.stats.lastMigrationName, null);
+      assert.strictEqual(status.stats.lastBatch, 0);
     });
 
     itWithDb("returns correct applied and pending migrations", async () => {
@@ -806,7 +806,7 @@ describe("Migrations Plugin", () => {
         "20240101_000001_status_applied",
       );
       assert.strictEqual(status.applied[0].batch, 1);
-      assert.ok(status.applied[0].migration_time instanceof Date);
+      assert.ok(status.applied[0].migrationTime instanceof Date);
 
       assert.strictEqual(status.pending.length, 1);
       assert.strictEqual(status.pending[0], "20240101_000002_status_pending");
@@ -855,14 +855,14 @@ describe("Migrations Plugin", () => {
 
       const status = await getMigrationStatus(secondBatch);
 
-      assert.strictEqual(status.stats.total_migrations, 3);
-      assert.strictEqual(status.stats.total_batches, 2);
+      assert.strictEqual(status.stats.totalMigrations, 3);
+      assert.strictEqual(status.stats.totalBatches, 2);
       assert.strictEqual(
-        status.stats.last_migration_name,
+        status.stats.lastMigrationName,
         "20240101_000003_stats_3",
       );
-      assert.strictEqual(status.stats.last_batch, 2);
-      assert.ok(status.stats.last_migration_time instanceof Date);
+      assert.strictEqual(status.stats.lastBatch, 2);
+      assert.ok(status.stats.lastMigrationTime instanceof Date);
     });
 
     itWithDb("handles empty migrations list", async () => {

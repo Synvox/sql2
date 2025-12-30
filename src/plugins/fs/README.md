@@ -1,902 +1,344 @@
-# SQL Filesystem with Version Control
+# FS Plugin (Virtual Filesystem with Version Control)
 
-A complete filesystem with Git-like version control implemented entirely in PostgreSQL. Built for AI pair-coding tools where fs.repositories act as virtual drives with full version control capabilities.
+A complete virtual filesystem with Git-like version control implemented in PostgreSQL. Built for AI pair-coding tools where repositories act as virtual drives with full version control capabilities.
 
 ## Features
 
-- **Git-like Version Control**: Commits, fs.branches, and file history
-- **Automatic Branch Management**: Branches automatically track their head fs.commits
+- **Git-like Version Control**: Commits, branches, and file history
+- **Automatic Branch Management**: Branches automatically track their head commits
 - **File Versioning**: Immutable file versions with cascading reads
 - **Path Normalization**: Automatic path cleaning and validation
 - **Cross-platform Compatibility**: Rejects invalid paths for Windows/Unix filesystems
-- **Direct Table Access**: Clean API with direct access to core tables
+- **TypeScript API**: Clean helper functions for all operations
 - **ACID Transactions**: Full PostgreSQL transactional guarantees
 
 ## Installation
 
-```bash
-npm install sql2
+```typescript
+import { fsPlugin } from "sql2/fs";
+
+// Install filesystem schema (run once)
+await fsPlugin();
 ```
 
 ## Quick Start
 
-```javascript
-import { PGlite } from "@electric-sql/pglite";
-import { QueryableStatement, type Interpolable } from "sql2";
-import { fsPlugin } from "sql2/fs";
+```typescript
+import {
+  initRepository,
+  commitToBranch,
+  readFile,
+  getCommitSnapshot,
+} from "sql2/fs";
 
-// Initialize database
-const db = new PGlite();
+// Initialize a repository with files
+const { repository, branch, commit } = await initRepository(
+  "my-project",
+  [
+    { path: "/README.md", content: "# My Project\n" },
+    { path: "/src/index.ts", content: "console.log('Hello');" },
+  ],
+  "Initial commit",
+);
 
-// Create a custom statement class for PGlite
-class PGliteStatement extends QueryableStatement {
-  async exec() {
-    await db.exec(this.compile());
-  }
-  async query<T>(): Promise<{ rows: T[] }> {
-    return db.query(this.compile(), this.values);
-  }
-}
+// Make more commits
+const { commit: newCommit } = await commitToBranch(
+  branch.id,
+  "Add utilities",
+  [{ path: "/src/utils.ts", content: "export const ok = true;" }],
+);
 
-// Create the sql template function
-const sql = (strings: TemplateStringsArray, ...values: Interpolable[]) =>
-  new PGliteStatement(strings, values);
+// Read a file
+const content = await readFile(newCommit.id, "/src/utils.ts");
+console.log(content); // "export const ok = true;"
 
-// Install filesystem schema
-await fsPlugin(sql);
-
-// Create a repository (auto-creates main branch)
-const repoResult = await sql`
-  INSERT INTO fs.repositories (name) VALUES ('my-project')
-  RETURNING id, default_branch_id
-`.query<{ id: string; default_branch_id: string }>();
-
-const { id: repoId, default_branch_id: mainBranchId } = repoResult.rows[0];
-
-// Root commit (only commit where parent_commit_id can be NULL)
-const rootCommitResult = await sql`
-  INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-  VALUES (${repoId}, NULL, 'Initial commit')
-  RETURNING id
-`.query<{ id: string }>();
-
-const rootCommitId = rootCommitResult.rows[0].id;
-
-await sql`
-  INSERT INTO fs.files (commit_id, path, content)
-  VALUES (${rootCommitId}, '/README.md', '# My Project\n')
-`.exec();
-
-// Set the branch head for the first commit (finalize requires a parent)
-await sql`
-  UPDATE fs.branches SET head_commit_id = ${rootCommitId}
-  WHERE id = ${mainBranchId}
-`.exec();
-
-// Next commits: set parent to current head + finalize to advance the branch
-const branchResult = await sql`
-  SELECT head_commit_id FROM fs.branches WHERE id = ${mainBranchId}
-`.query<{ head_commit_id: string }>();
-
-const parentCommitId = branchResult.rows[0].head_commit_id;
-
-const newCommitResult = await sql`
-  INSERT INTO fs.commits (repository_id, parent_commit_id, message)
-  VALUES (${repoId}, ${parentCommitId}, 'Add utils')
-  RETURNING id
-`.query<{ id: string }>();
-
-const newCommitId = newCommitResult.rows[0].id;
-
-await sql`
-  INSERT INTO fs.files (commit_id, path, content)
-  VALUES (${newCommitId}, '/src/utils.js', 'export const ok = true;')
-`.exec();
-
-// Applies non-conflicting changes and advances the branch head
-await sql`SELECT * FROM fs.finalize_commit(${newCommitId}, ${mainBranchId})`.exec();
+// Get all files at a commit
+const files = await getCommitSnapshot(newCommit.id);
+// [{ path: "/README.md", ... }, { path: "/src/index.ts", ... }, { path: "/src/utils.ts", ... }]
 ```
-
-Use `fs.finalize_commit` any time you want to apply a commit and move a branch
-head (fast-forward or merge). Only the very first commit on a branch uses a
-direct `UPDATE` because `parent_commit_id` is `NULL`.
 
 ## Core Concepts
 
 ### Repositories
 
-- Contain fs.branches and fs.commits
-- Auto-create a 'main' branch (with `head_commit_id = NULL` until the first commit is created)
-- Direct table access: `fs.repositories`
+Repositories are containers for branches and commits. Creating a repository automatically creates a 'main' branch.
+
+```typescript
+import {
+  createRepository,
+  getRepository,
+  listRepositories,
+} from "sql2/fs";
+
+// Create a repository
+const repo = await createRepository("my-app");
+
+// Get by name
+const repo = await getRepository("my-app");
+
+// List all
+const repos = await listRepositories();
+```
 
 ### Branches
 
-- Point to head fs.commits
-- Must point to an existing commit (defaults to the repository default branch head if `head_commit_id` is omitted)
-- Direct table access: `fs.branches`
+Branches point to head commits and track the latest state of a line of development.
+
+```typescript
+import {
+  createBranch,
+  getBranch,
+  listBranches,
+  updateBranchHead,
+} from "sql2/fs";
+
+// Create a feature branch (starts at default branch head)
+const branch = await createBranch(repo.id, "feature/dark-mode");
+
+// Create from a specific commit
+const branch = await createBranch(repo.id, "hotfix", commitId);
+
+// Get a branch
+const main = await getBranch(repo.id, "main");
+
+// List all branches in a repo
+const branches = await listBranches(repo.id);
+
+// Update branch head
+await updateBranchHead(branch.id, newCommitId);
+```
 
 ### Commits
 
-- Immutable snapshots of repository state
-- Chain together via parent relationships (linear history)
-- Merge metadata stored via `merged_from_commit_id` while keeping a single parent
-- Direct table access: `fs.commits`
+Commits are immutable snapshots of repository state. Each commit (except the root) has a parent.
+
+```typescript
+import { createCommit, getCommit } from "sql2/fs";
+
+// Create a commit
+const commit = await createCommit(
+  repo.id,
+  "Add feature X",
+  parentCommitId, // null for root commit
+);
+
+// Get a commit by ID
+const commit = await getCommit(commitId);
+```
 
 ### Files
 
-- Versioned content with commit relationships
-- Direct table access: `fs.files`
-- Automatic path normalization and validation
-- Optional symlinks: set `is_symlink = TRUE` and store the (absolute) target path in `content`
+Files are versioned content attached to commits. Use path normalization and validation automatically.
 
-## Comprehensive Examples
+```typescript
+import {
+  writeFile,
+  writeFiles,
+  readFile,
+  deleteFile,
+} from "sql2/fs";
 
-### 1. Repository Management
+// Write a single file
+await writeFile(commitId, "/src/app.ts", "const app = {};");
 
-```sql
--- Create a repository (auto-creates main branch; it starts empty)
-insert into
-  fs.repositories (name)
-values
-  ('my-web-app')
-returning
-  id;
+// Write multiple files
+await writeFiles(commitId, [
+  { path: "/src/a.ts", content: "export const a = 1;" },
+  { path: "/src/b.ts", content: "export const b = 2;" },
+]);
 
--- List all fs.repositories
-select
-  id,
-  name,
-  created_at
-from
-  fs.repositories;
+// Read a file (resolves through ancestry)
+const content = await readFile(commitId, "/src/app.ts");
 
--- Get repository with default branch info
-select
-  r.*,
-  b.name as default_branch_name,
-  b.head_commit_id
-from
-  fs.repositories r
-  left join fs.branches b on r.default_branch_id = b.id;
+// Delete a file (creates a tombstone)
+await deleteFile(commitId, "/src/old.ts");
+
+// Create a symlink
+await writeFile(commitId, "/link.ts", "/src/app.ts", { isSymlink: true });
 ```
 
-### 2. Branch Management
+## Convenience Functions
 
-```sql
--- Create a feature branch (defaults to starting at the repository default branch head)
-insert into
-  fs.branches (repository_id, name)
-values
-  ('repo-id', 'feature/user-auth')
-returning
-  id;
+### `initRepository(name, files, message?)`
 
--- Create a feature branch starting from a specific commit
-insert into
-  fs.branches (repository_id, name, head_commit_id)
-values
-  ('repo-id', 'feature/user-auth', 'commit-id')
-returning
-  id;
+Creates a repository with an initial commit containing files.
 
--- List fs.branches for a repository
-select
-  id,
-  name,
-  head_commit_id,
-  created_at
-from
-  fs.branches
-where
-  repository_id = 'repo-id';
-
--- Switch default branch (conceptually)
-update fs.repositories
-set
-  default_branch_id = (
-    select
-      id
-    from
-      fs.branches
-    where
-      name = 'main'
-  )
-where
-  id = 'repo-id';
+```typescript
+const { repository, branch, commit } = await initRepository(
+  "my-project",
+  [
+    { path: "/README.md", content: "# Project" },
+    { path: "/package.json", content: '{"name": "project"}' },
+  ],
+  "Initial commit",
+);
 ```
 
-### 3. Making Commits
+### `commitToBranch(branchId, message, files)`
 
-```sql
--- Create a commit on main (fast-forward finalize)
-with
-  main_branch as (
-    select
-      id as branch_id,
-      head_commit_id
-    from
-      fs.branches
-    where
-      repository_id = 'repo-id'
-      and name = 'main'
-  )
-insert into
-  fs.commits (repository_id, parent_commit_id, message)
-select
-  'repo-id',
-  head_commit_id,
-  'Add user authentication'
-from
-  main_branch
-returning
-  id into commit_id;
+Creates a commit with files and advances the branch in one operation.
 
--- Write files for that commit
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    commit_id,
-    '/src/auth.js',
-    'export const auth = true;'
-  );
-
--- Apply changes and advance branch head
-select
-  *
-from
-  fs.finalize_commit (
-    commit_id,
-    (
-      select
-        branch_id
-      from
-        main_branch
-    )
-  );
-
--- Create a commit on a feature branch based on its head
-with
-  feature_branch as (
-    select
-      id as branch_id,
-      head_commit_id
-    from
-      fs.branches
-    where
-      repository_id = 'repo-id'
-      and name = 'feature/user-auth'
-  )
-insert into
-  fs.commits (repository_id, parent_commit_id, message)
-select
-  'repo-id',
-  head_commit_id,
-  'Implement login form'
-from
-  feature_branch
-returning
-  id into commit_id;
-
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    commit_id,
-    '/src/login.js',
-    'export function login() { return true; }'
-  );
-
-select
-  *
-from
-  fs.finalize_commit (
-    commit_id,
-    (
-      select
-        branch_id
-      from
-        feature_branch
-    )
-  );
-
--- List commit history/tree for a repository
-with recursive
-  commit_history as (
-    -- Start with current branch heads
-    select
-      c.id,
-      c.parent_commit_id,
-      c.message,
-      c.created_at,
-      b.name as branch_name,
-      0 as depth
-    from
-      fs.commits c
-      left join fs.branches b on c.id = b.head_commit_id
-    where
-      c.repository_id = 'repo-id'
-    union all
-    -- Recursively follow parent commit chain
-    select
-      c.id,
-      c.parent_commit_id,
-      c.message,
-      c.created_at,
-      ch.branch_name,
-      ch.depth + 1
-    from
-      fs.commits c
-      join commit_history ch on c.id = ch.parent_commit_id
-  )
-select
-  id,
-  message,
-  created_at,
-  branch_name,
-  REPEAT('  ', depth) || '- ' || LEFT(message, 50) as tree_view
-from
-  commit_history
-order by
-  depth asc,
-  created_at desc;
+```typescript
+const { commit, branch } = await commitToBranch(branch.id, "Update config", [
+  { path: "/config.json", content: '{"debug": false}' },
+]);
 ```
 
-### 4. File Operations
+## Reading Repository State
 
-```sql
--- First create a commit anchored to the branch head
-with
-  main_branch as (
-    select
-      id as branch_id,
-      head_commit_id
-    from
-      fs.branches
-    where
-      repository_id = 'repo-id'
-      and name = 'main'
-  )
-insert into
-  fs.commits (repository_id, parent_commit_id, message)
-select
-  'repo-id',
-  head_commit_id,
-  'Add source files'
-from
-  main_branch
-returning
-  id into commit_id;
+### Get Commit Delta
 
--- Add files to the commit
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    commit_id,
-    '/src/index.js',
-    'console.log("Hello World");'
-  ),
-  (
-    commit_id,
-    '/src/utils.js',
-    'export function helper() { return true; }'
-  ),
-  (
-    commit_id,
-    '/README.md',
-    '# My Project\n\nA cool project.'
-  );
+Get files written in a specific commit (not inherited files):
 
--- Update a file (creates new version)
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    commit_id,
-    '/src/index.js',
-    'console.log("Hello, updated world!");'
-  );
+```typescript
+import { getCommitDelta } from "sql2/fs";
 
--- Apply the commit and advance the branch
-select
-  *
-from
-  fs.finalize_commit (
-    commit_id,
-    (
-      select
-        branch_id
-      from
-        main_branch
-    )
-  );
-
--- Read current file content
-select
-  fs.read_file ('commit-id', '/src/index.js') as content;
-
--- List all files in a commit
-select
-  path,
-  is_symlink
-from
-  fs.get_commit_snapshot ('commit-id');
+const delta = await getCommitDelta(commitId);
+// [{ path, isDeleted, isSymlink, commitMessage, ... }]
 ```
 
-### 5. Version Control Operations
+### Get Commit Snapshot
 
-```sql
--- Get file history across fs.commits
-select
-  *
-from
-  fs.get_file_history ('latest-commit-id', '/src/index.js');
+Get the complete file tree at a commit (includes inherited files):
 
--- Browse repository contents (equivalent to default branch)
-select
-  *
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = (
-          select
-            default_branch_id
-          from
-            fs.repositories
-          where
-            id = 'repo-id'
-        )
-    )
-  );
+```typescript
+import { getCommitSnapshot } from "sql2/fs";
 
--- Compare file versions
-select
-  c1.message as commit_message,
-  fs.read_file (c1.id, '/src/index.js') as old_content,
-  fs.read_file (c2.id, '/src/index.js') as new_content
-from
-  fs.commits c1,
-  fs.commits c2
-where
-  c1.parent_commit_id is null -- root commit
-  and c2.parent_commit_id = c1.id;
+const snapshot = await getCommitSnapshot(commitId);
+// [{ path, isSymlink, commitMessage, ... }]
 
--- next commit
+// Filter by path prefix
+const srcFiles = await getCommitSnapshot(commitId, "/src");
 ```
 
-### 6. Advanced Branching Workflow
+### Get File History
 
-```sql
--- Create feature branch from current main
-insert into
-  fs.branches (repository_id, name)
-values
-  ('repo-id', 'feature/dark-mode')
-returning
-  id into feature_branch_id;
+Get the change history of a specific file:
 
--- Work on feature branch
-with
-  feature_branch as (
-    select
-      id as branch_id,
-      head_commit_id
-    from
-      fs.branches
-    where
-      id = feature_branch_id
-  )
-insert into
-  fs.commits (repository_id, parent_commit_id, message)
-select
-  'repo-id',
-  head_commit_id,
-  'Add dark mode styles'
-from
-  feature_branch
-returning
-  id into feature_commit_id;
+```typescript
+import { getFileHistory } from "sql2/fs";
 
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    feature_commit_id,
-    '/src/theme.css',
-    '.dark { background: black; color: white; }'
-  );
-
-select
-  *
-from
-  fs.finalize_commit (
-    feature_commit_id,
-    (
-      select
-        branch_id
-      from
-        feature_branch
-    )
-  );
-
--- Continue working on main branch
-with
-  main_branch as (
-    select
-      id as branch_id,
-      head_commit_id
-    from
-      fs.branches
-    where
-      repository_id = 'repo-id'
-      and name = 'main'
-  )
-insert into
-  fs.commits (repository_id, parent_commit_id, message)
-select
-  'repo-id',
-  head_commit_id,
-  'Add user preferences'
-from
-  main_branch
-returning
-  id into main_commit_id;
-
-insert into
-  fs.files (commit_id, path, content)
-values
-  (
-    main_commit_id,
-    '/src/preferences.js',
-    'const theme = localStorage.getItem("theme");'
-  );
-
-select
-  *
-from
-  fs.finalize_commit (
-    main_commit_id,
-    (
-      select
-        branch_id
-      from
-        main_branch
-    )
-  );
-
-* * * *
--- View different branch contents
-select
-  'Main branch:' as branch,
-  path,
-  LEFT(content, 50) as content_preview
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = (
-          select
-            default_branch_id
-          from
-            fs.repositories
-          where
-            id = 'repo-id'
-        )
-    )
-  )
-union all
-select
-  'Feature branch:' as branch,
-  path,
-  LEFT(content, 50) as content_preview
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = feature_branch_id
-    )
-  );
+const history = await getFileHistory(commitId, "/src/app.ts");
+// [{ commitId, content, isDeleted, commitMessage, commitCreatedAt }]
 ```
 
-### 7. Repository Browsing
+## Merge & Rebase Operations
 
-```sql
--- Browse current repository contents (default branch)
-select
-  gcc.repository_name,
-  gcc.path,
-  LEFT(gcc.content, 100) as content_preview
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = (
-          select
-            default_branch_id
-          from
-            fs.repositories
-          where
-            name = 'my-project'
-        )
-    )
-  ) gcc
-order by
-  gcc.path;
+### Find Merge Base
 
--- Get detailed file info including commit metadata
-select
-  gcc.repository_name as repo_name,
-  b.name as branch_name,
-  gcc.path,
-  gcc.content,
-  gcc.commit_message as snapshot_commit_message,
-  gcc.commit_created_at as snapshot_created_at
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = (
-          select
-            default_branch_id
-          from
-            fs.repositories
-          where
-            id = 'repo-id'
-        )
-    )
-  ) gcc
-  cross join fs.branches b
-where
-  b.id = (
-    select
-      default_branch_id
-    from
-      fs.repositories
-    where
-      id = 'repo-id'
-  )
-order by
-  gcc.path;
+Find the common ancestor of two commits:
 
--- Compare file sizes across fs.branches
-select
-  'main' as branch,
-  COUNT(*) as file_count,
-  SUM(LENGTH(gcc.content)) as total_bytes
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        repository_id = 'repo-id'
-        and name = 'main'
-    )
-  ) gcc
-union all
-select
-  'feature',
-  COUNT(*),
-  SUM(LENGTH(gcc.content))
-from
-  fs.get_commit_snapshot (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        repository_id = 'repo-id'
-        and name = 'feature'
-    )
-  ) gcc;
+```typescript
+import { getMergeBase } from "sql2/fs";
+
+const baseCommitId = await getMergeBase(commit1Id, commit2Id);
 ```
 
-````
+### Detect Conflicts
 
-## Merging with Linear History
+Check for file-level conflicts between two commits:
 
-This system keeps history linear (each commit has one parent) while still tracking merges via `merged_from_commit_id`. A merge is a two-phase flow:
+```typescript
+import { getConflicts } from "sql2/fs";
 
-1) **Prepare the merge commit** (you do this):
-   - Create a commit whose `parent_commit_id` is the target branch head and whose `merged_from_commit_id` is the source head.
-   - Optional: add rows to `fs.files` for any conflict paths you want to resolve manually.
+const conflicts = await getConflicts(targetHead, sourceHead);
+// [{ path, conflictKind, baseContent, leftContent, rightContent, ... }]
 
-   ```sql
-   INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id)
-   VALUES ($repo_id, 'Merge feature into main', $target_head, $source_head)
-   RETURNING id INTO merge_commit_id;
-
-   -- Optional conflict resolution authored by the user
-   INSERT INTO fs.files (commit_id, path, content)
-   VALUES (merge_commit_id, '/conflicted.txt', 'resolved content');
-````
-
-2. **Finalize the merge** (system-assisted):
-   - Applies non-conflicting changes from the source onto the merge commit.
-   - Verifies every conflicting path has a user-supplied row in `fs.files` for the merge commit (otherwise raises).
-   - Advances the target branch head to the merge commit.
-
-   ```sql
-   SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
-   ```
-
-Conflict workflow:
-
-- Discover conflicts: `SELECT * FROM fs.get_conflicts($target_head, $source_head);`
-- If conflicts exist, insert resolutions on the merge commit before calling `fs.finalize_commit`.
-- If no conflicts, `fs.finalize_commit` applies remaining changes and (optionally) moves the branch head.
-
-`fs.finalize_commit` specifics:
-
-- Inputs: `commit_id` (required) and `target_branch_id` (optional).
-  - When `target_branch_id` is provided: it must belong to the same repo and its head must equal the merge commit’s `parent_commit_id`; the branch head is advanced to the merge commit.
-  - When omitted: files are applied but branch pointers do not move.
-- Validations:
-  - `parent_commit_id` is required.
-  - If `merged_from_commit_id` is present: full merge flow with conflict checks; all conflict paths must have user-authored rows in `fs.files` for the merge commit or the call raises.
-  - If `merged_from_commit_id` is NULL: treated as fast-forward finalize; no conflict/patch work runs.
-- Returns: `operation` (`merged`, `merged_with_conflicts_resolved`, `already_up_to_date`, or `fast_forward`), `applied_file_count`, and `new_target_head_commit_id` (NULL when no branch was provided).
-
-Fast-forward / already up to date:
-
-- If the source is already contained in the target, `fs.finalize_commit` returns `operation = 'already_up_to_date'` and leaves files unchanged.
-
-Rebase (still linear):
-
-- `SELECT * FROM fs.rebase_branch($branch_id, $onto_branch_id, 'Rebase message');`
-- Conflicts are detected with `fs.get_conflicts` and will raise if present.
-
-## Reference Merge Workflows
-
-### Fast-forward-like merge (no conflicts)
-
-```sql
--- Prepare merge commit
-INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id)
-VALUES ($repo_id, 'Merge feature', $target_head, $source_head)
-RETURNING id INTO merge_commit_id;
-
--- Finalize
-SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
+if (conflicts.length > 0) {
+  // Handle conflicts before merging
+}
 ```
 
-### Merge with conflicts
+### Rebase Branch
 
-```sql
--- Inspect conflicts
-SELECT * FROM fs.get_conflicts($target_head, $source_head);
+Replay a branch's changes onto another branch:
 
--- Prepare merge commit
-INSERT INTO fs.commits (repository_id, message, parent_commit_id, merged_from_commit_id)
-VALUES ($repo_id, 'Merge feature with conflicts', $target_head, $source_head)
-RETURNING id INTO merge_commit_id;
+```typescript
+import { rebaseBranch } from "sql2/fs";
 
--- Provide resolutions on the merge commit
-INSERT INTO fs.files (commit_id, path, content)
-VALUES (merge_commit_id, '/conflicted.txt', 'resolved content');
+const result = await rebaseBranch(featureBranchId, mainBranchId, "Rebase message");
+// { operation, appliedFileCount, newBranchHeadCommitId, ... }
+```
 
--- Finalize (raises if any conflict path lacks a resolution)
-SELECT * FROM fs.finalize_commit(merge_commit_id, $target_branch_id);
+### Finalize Commit
+
+Apply a merge commit and advance a branch:
+
+```typescript
+import { createCommit, writeFile, finalizeCommit } from "sql2/fs";
+
+// Create merge commit
+const mergeCommit = await createCommit(
+  repoId,
+  "Merge feature into main",
+  targetHead, // parent
+  sourceHead, // merged from
+);
+
+// Resolve any conflicts by writing files
+await writeFile(mergeCommit.id, "/conflicted.txt", "resolved content");
+
+// Apply changes and advance branch
+const result = await finalizeCommit(mergeCommit.id, targetBranchId);
+// { operation, appliedFileCount, newTargetHeadCommitId, ... }
 ```
 
 ## API Reference
 
-### Tables (Direct Access)
+### Repository Functions
 
-- **`fs.repositories`** - Repository metadata
-- **`fs.branches`** - Branch information and head fs.commits
-- **`fs.commits`** - Commits (parent defaults to repository default branch head when omitted); merge metadata can be recorded with `merged_from_commit_id`
-- **`fs.files`** - Files written in commits (validated/normalized on insert)
-  - Set `is_deleted = TRUE` to tombstone-delete a file in a commit
-  - Set `is_symlink = TRUE` to create a symlink whose `content` is the normalized absolute target path
+| Function                   | Description                 |
+| -------------------------- | --------------------------- |
+| `fsPlugin()`               | Install the filesystem schema |
+| `createRepository(name)`   | Create a new repository     |
+| `getRepository(name)`      | Get repository by name      |
+| `getRepositoryById(id)`    | Get repository by ID        |
+| `listRepositories()`       | List all repositories       |
 
-### Functions
+### Branch Functions
 
-- **`fs.read_file(commit_id, path)`** - Read file content from specific commit
-- **`fs.get_file_history(commit_id, path)`** - Get file version history (`commit_id`, `content`, `is_deleted`, `is_symlink`)
-- **`fs.get_commit_delta(commit_id)`** - Get per-commit delta (files written in that commit only)
-- **`fs.get_commit_snapshot(commit_id, path_prefix?)`** - Get resolved snapshot at a commit
-- **`fs.get_merge_base(left_commit_id, right_commit_id)`** - Lowest common ancestor (traverses `parent_commit_id` and `merged_from_commit_id`)
-- **`fs.get_conflicts(left_commit_id, right_commit_id)`** - 3-way conflict detection across commits
-- **`fs.finalize_commit(commit_id, target_branch_id NULL)`** - Apply non-conflicting changes for a pre-created merge commit; caller supplies the merge commit (`parent_commit_id` + `merged_from_commit_id`) and any conflict resolutions; optionally advance a branch head when `target_branch_id` is provided
-- **`fs.rebase_branch(branch_id, onto_branch_id, message?)`** - Replay branch changes onto another head, keeping linear history
+| Function                            | Description                    |
+| ----------------------------------- | ------------------------------ |
+| `createBranch(repoId, name, head?)` | Create a branch                |
+| `getBranch(repoId, name)`           | Get branch by repo and name    |
+| `getBranchById(id)`                 | Get branch by ID               |
+| `listBranches(repoId)`              | List branches in a repository  |
+| `updateBranchHead(id, commitId)`    | Update branch head commit      |
 
-**Returns columns:**
+### Commit Functions
 
-- `repository_id`, `repository_name` - Repository info
-- `commit_id` - Commit identifier
-- `path` - File path
-- `is_deleted`, `is_symlink` - File state flags (delta only; snapshot returns `is_symlink`)
-- `file_created_at`, `commit_created_at`, `commit_message` - Timestamps and commit details
+| Function                                          | Description                     |
+| ------------------------------------------------- | ------------------------------- |
+| `createCommit(repoId, message, parent?, merged?)` | Create a commit                 |
+| `getCommit(id)`                                   | Get commit by ID                |
+| `getCommitDelta(id)`                              | Get files in this commit only   |
+| `getCommitSnapshot(id, prefix?)`                  | Get full file tree at commit    |
 
-**Note:** `fs.get_commit_delta` and `fs.get_commit_snapshot` intentionally do **not** return file `content`. Use `fs.read_file(commit_id, path)` for content lookups.
+### File Functions
 
-**Usage:**
+| Function                              | Description                         |
+| ------------------------------------- | ----------------------------------- |
+| `writeFile(commitId, path, content)`  | Write a file to a commit            |
+| `writeFiles(commitId, files)`         | Write multiple files                |
+| `readFile(commitId, path)`            | Read file content                   |
+| `deleteFile(commitId, path)`          | Delete a file (tombstone)           |
+| `getFileHistory(commitId, path)`      | Get file change history             |
 
-```sql
--- Get file delta for any commit
-select
-  *
-from
-  fs.get_commit_delta ('commit-id');
+### Merge Functions
 
--- Get contents of branch head (resolve branch to commit first)
-select
-  gcc.*,
-  b.name as branch_name
-from
-  fs.get_commit_delta (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = 'branch-id'
-    )
-  ) gcc
-  cross join fs.branches b
-where
-  b.id = 'branch-id';
+| Function                                  | Description                        |
+| ----------------------------------------- | ---------------------------------- |
+| `getMergeBase(left, right)`               | Find common ancestor               |
+| `getConflicts(left, right)`               | Detect file conflicts              |
+| `rebaseBranch(branchId, ontoId, msg?)`    | Rebase a branch                    |
+| `finalizeCommit(commitId, branchId?)`     | Apply merge and advance branch     |
 
--- Get contents of default branch
-select
-  gcc.*,
-  b.name as branch_name
-from
-  fs.get_commit_delta (
-    (
-      select
-        head_commit_id
-      from
-        fs.branches
-      where
-        id = (
-          select
-            default_branch_id
-          from
-            fs.repositories
-          where
-            id = 'repo-id'
-        )
-    )
-  ) gcc
-  cross join fs.branches b
-where
-  b.id = (
-    select
-      default_branch_id
-    from
-      fs.repositories
-    where
-      id = 'repo-id'
-  );
-```
+### Convenience Functions
+
+| Function                                   | Description                              |
+| ------------------------------------------ | ---------------------------------------- |
+| `initRepository(name, files, message?)`    | Create repo with initial commit          |
+| `commitToBranch(branchId, message, files)` | Commit files and advance branch          |
 
 ## Path Validation
 
@@ -907,19 +349,6 @@ All file paths are automatically validated and normalized:
 - **Normalization**: absolute paths, remove duplicate slashes, trim trailing slashes
 - **Length limit**: 4096 characters max
 
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Run tests
-npm test
-
-# Run specific test
-npm test -- --grep "repository"
-```
-
 ## Architecture
 
 - **Pure PostgreSQL**: No external dependencies
@@ -927,5 +356,3 @@ npm test -- --grep "repository"
 - **Immutable Files**: File versions never change
 - **Cascading Reads**: Parent commit lookup for missing files
 - **Branch Head Tracking**: Automatic branch pointer updates
-
-Built with modern PostgreSQL features including CTEs, window functions, and advanced triggers for a complete version control system in SQL.

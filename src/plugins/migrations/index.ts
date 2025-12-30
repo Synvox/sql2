@@ -140,14 +140,14 @@ export async function runMigrations(
  * @returns Object with applied, pending, and stats
  */
 export async function getMigrationStatus(migrations: Migration[]): Promise<{
-  applied: Array<{ name: string; batch: number; migration_time: Date }>;
+  applied: Array<{ name: string; batch: number; migrationTime: Date }>;
   pending: string[];
   stats: {
-    total_migrations: number;
-    total_batches: number;
-    last_migration_name: string | null;
-    last_migration_time: Date | null;
-    last_batch: number;
+    totalMigrations: number;
+    totalBatches: number;
+    lastMigrationName: string | null;
+    lastMigrationTime: Date | null;
+    lastBatch: number;
   };
 }> {
   const sql = getSql({ camelize: false });
@@ -195,16 +195,24 @@ export async function getMigrationStatus(migrations: Migration[]): Promise<{
     applied: appliedRows.map((r) => ({
       name: r.name,
       batch: r.batch,
-      migration_time: r.migration_time,
+      migrationTime: r.migration_time,
     })),
     pending: pendingRows.map((r) => r.name),
-    stats: statsRow || {
-      total_migrations: 0,
-      total_batches: 0,
-      last_migration_name: null,
-      last_migration_time: null,
-      last_batch: 0,
-    },
+    stats: statsRow
+      ? {
+          totalMigrations: statsRow.total_migrations,
+          totalBatches: statsRow.total_batches,
+          lastMigrationName: statsRow.last_migration_name,
+          lastMigrationTime: statsRow.last_migration_time,
+          lastBatch: statsRow.last_batch,
+        }
+      : {
+          totalMigrations: 0,
+          totalBatches: 0,
+          lastMigrationName: null,
+          lastMigrationTime: null,
+          lastBatch: 0,
+        },
   };
 }
 
@@ -214,9 +222,9 @@ export async function getMigrationStatus(migrations: Migration[]): Promise<{
  * @returns Lock status information
  */
 export async function getLockStatus(): Promise<{
-  is_locked: boolean;
-  locked_at: Date | null;
-  locked_by: string | null;
+  isLocked: boolean;
+  lockedAt: Date | null;
+  lockedBy: string | null;
 }> {
   const sql = getSql({ camelize: false });
   const row = await sql`
@@ -230,7 +238,13 @@ export async function getLockStatus(): Promise<{
     locked_by: string | null;
   }>();
 
-  return row || { is_locked: false, locked_at: null, locked_by: null };
+  return row
+    ? {
+        isLocked: row.is_locked,
+        lockedAt: row.locked_at,
+        lockedBy: row.locked_by,
+      }
+    : { isLocked: false, lockedAt: null, lockedBy: null };
 }
 
 /**
